@@ -131,6 +131,7 @@ dmypy.json
 *.pth
 .history/
 .vscode/
+.idea/
 *.onnx
 .reproduce_state
 
@@ -150,4 +151,3 @@ train_map_multimlp/
 scripts/tmp_run_yamls/
 gen_fm_exps/
 fine_vis4paper/
-
