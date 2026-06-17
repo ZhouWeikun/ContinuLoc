@@ -17,12 +17,6 @@ The ContinuScenes dataset release is in progress and will be made available soon
 
 Install the project dependencies in your preferred Python environment. The implementation expects PyTorch and the dependencies used by the visual backbone, SALAD aggregator, and INGP modules.
 
-If Kaolin Wisp is installed outside this repository, expose it with:
-
-```bash
-export KAOLIN_WISP_ROOT=/path/to/kaolin-wisp
-```
-
 Edit the YAML files under `trainer_depends/configs/` to point to your dataset, checkpoint, and output locations before running experiments.
 
 ## Landscape-Aware Representation Learning
