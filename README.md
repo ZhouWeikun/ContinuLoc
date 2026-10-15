@@ -34,6 +34,25 @@ python trainers/stage1_visual_encoder_minimal.py \
   --p_yaml trainer_depends/configs/stage1_visual_encoder_wingtra.yaml
 ```
 
+VisLoc scenes are resolved from `scenes_setting.dataset_manifest`. Stage 1 defaults
+to scenes 03 and 04; Stage 2 defaults to scene 03. Select scenes by numeric ID or
+full name (`03` / `visloc_03`), without copying dataset paths into the training YAML:
+
+```bash
+python trainers/stage1_visual_encoder_minimal.py \
+  --p_yaml trainer_depends/configs/stage1_visual_encoder_visloc.yaml \
+  --selected_scene_names 03 04 08 11
+```
+
+For one scene, use `--selected_scene_name 08` instead. These options override the
+YAML selection and cannot be combined. Omitting both selection fields in a
+manifest-based YAML uses the manifest's `default_scene_names`. Relative dataset
+paths resolve against the manifest directory; keep the manifest path absolute.
+Unknown, duplicate, unprepared scenes and missing paths fail before data loading.
+Expanded scene names and paths are included in saved experiment configurations.
+CSV validity, split labels, and scale filtering rules are unchanged. Stage 2
+checkpoint settings still need to match the intended experiment.
+
 Evaluate the learned representation with a reference gallery:
 
 ```bash
@@ -97,3 +116,47 @@ Common configuration files:
 - `trainer_depends/configs/stage3_recall_thresholds.yaml`
 
 Use the `wingtra` or `visloc` variants according to the scene split you want to run.
+
+### Optional grid sampling query geometry
+
+The default query augmentation remains `pipelined`. To opt into a centered source
+crop followed by antialiased reduction and one combined rotation/scale/shear
+sampling operation, add these fields to the training YAML:
+
+```yaml
+data_setting:
+  query_geometry_method: grid_sampling
+  query_prefilter_resolution_factor: 2.0
+```
+
+The grid_sampling pipeline outputs the same tensor shape and tracks the same rotation and
+scale label convention. It retains colour/erase/normalization steps and leaves
+the test transform unchanged. It currently supports centered square crops and
+x-shear; extra affine translation/rotation/scale and random crops are rejected.
+Here `grid_sampling` describes the coordinate mapping; sampling uses Pillow's
+affine transform, not PyTorch's `grid_sample`.
+Shear remains an unlabelled training perturbation. Combining operations can retain
+content that the pipelined intermediate square canvases discarded; padding pixels
+and integer-rounded pipelined scale crops are not expected to match exactly.
+
+`query_prefilter_resolution_factor: 0` disables antialiased source reduction for
+comparison; directly sampling a large source can alias. The normal grid_sampling path
+uses Lanczos reduction to roughly twice the output resolution (adjusted for
+scale/shear), followed by one bicubic affine sample, not repeated 224px warps.
+This is an approximate antialiasing strategy, not a guarantee of alias-free output.
+
+Compare fixed-parameter real DataLoader pairs (same rows, rotation, scale and
+shear; no erasure/colour jitter) and CPU timing:
+
+```bash
+python -m trainer_depends.datasets.dataset_neuloc_4d_uav_sat_pair \
+  --scenes 08 11 --samples 8 --augmentation --query-geometry-method grid_sampling \
+  --compare-geometry-dir /tmp/query_geometry_comparison \
+  --visualize-dir /tmp/query_geometry_pairs \
+  --report /tmp/query_geometry_comparison/report.json
+python -m unittest discover -s tests -v
+```
+
+The comparison timing includes image decoding and positive satellite sampling,
+uses `num_workers=0`, and excludes scene initialization and plots. It is a small
+CPU smoke benchmark, not a measurement of full training throughput or accuracy.

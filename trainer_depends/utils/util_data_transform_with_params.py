@@ -171,6 +171,80 @@ class RandomScaleWithParams(torch.nn.Module):
         return self.last_scale
 
 
+class GridSamplingQueryGeometry(torch.nn.Module):
+    """One affine resampling after optional antialiased source reduction.
+
+    Coordinates use Pillow edge coordinates (center=size/2). Positive rotation
+    matches RandomRotationWithParams: F.rotate(image, -rotation_deg).
+    A centered square of the original image defines the unchanged footprint.
+    No intermediate rotated/scaled 224px images are produced. Shear remains an
+    unlabelled augmentation, exactly as in the pipelined pipeline.
+    """
+    def __init__(self, size=224, rotation_range=(-180, 180), scale_range=(.95, 1.05),
+                 shear_range=(0, 0), pad_mode=None, prefilter_resolution_factor=2.0):
+        super().__init__()
+        if size <= 0 or prefilter_resolution_factor < 0:
+            raise ValueError('size must be positive and prefilter_resolution_factor nonnegative')
+        if not 0 < scale_range[0] <= scale_range[1]:
+            raise ValueError('Invalid scale_range')
+        self.size = int(size)
+        self.rotation_range = rotation_range
+        self.scale_range = scale_range
+        self.shear_range = shear_range
+        self.pad_mode = pad_mode
+        self.prefilter_resolution_factor = float(prefilter_resolution_factor)
+        self.last_params = None
+
+    def get_params(self):
+        if self.last_params is None:
+            raise RuntimeError('Call the transform before reading its parameters')
+        return dict(self.last_params)
+
+    def inverse_matrix(self, source_size, rotation_deg, scale, shear_deg=0):
+        """Output -> source; inverse order is shear, rotation, scale, crop."""
+        angle = np.deg2rad(rotation_deg)
+        rotation_inverse = np.array([[np.cos(angle), np.sin(angle)],
+                                     [-np.sin(angle), np.cos(angle)]])
+        shear_inverse = np.array([[1., np.tan(np.deg2rad(shear_deg))], [0., 1.]])
+        linear = (source_size / self.size / scale) * (rotation_inverse @ shear_inverse)
+        translation = np.full(2, source_size / 2) - linear @ np.full(2, self.size / 2)
+        return np.column_stack([linear, translation])
+
+    def render(self, img, rotation_deg, scale, shear_deg=0):
+        from PIL import Image, ImageStat
+        if not isinstance(img, Image.Image):
+            raise TypeError('GridSamplingQueryGeometry expects an original PIL image')
+        if not np.isfinite([rotation_deg, scale, shear_deg]).all() or scale <= 0 or abs(shear_deg) >= 89:
+            raise ValueError('Invalid geometry parameters')
+        side = min(img.size)
+        # Crop without interpolation; preserve the original image center to half-pixel precision.
+        # Odd aspect differences are handled by the affine translation below.
+        offset = np.array([(img.width-side)/2, (img.height-side)/2])
+        left, top = int(np.floor(offset[0])), int(np.floor(offset[1]))
+        source = img.crop((left, top, left+side, top+side))
+        residual = offset - [left, top]
+        # Pillow computes channel sums without materializing a full NumPy RGB copy.
+        fill = 0 if self.pad_mode in {'zero', 'zeros', '0'} else tuple(round(v) for v in ImageStat.Stat(source).mean)
+        if self.prefilter_resolution_factor:
+            shear_inverse = np.array([[1., np.tan(np.deg2rad(shear_deg))], [0., 1.]])
+            target = max(self.size, int(np.ceil(self.prefilter_resolution_factor*self.size*max(1., scale)*np.linalg.norm(shear_inverse, 2))))
+            if side > target:
+                source = source.resize((target, target), Image.Resampling.LANCZOS)
+        matrix = self.inverse_matrix(source.width, rotation_deg, scale, shear_deg)
+        matrix[:, 2] += residual * source.width / side
+        result = source.transform((self.size, self.size), Image.Transform.AFFINE,
+                                  matrix.reshape(-1).tolist(), Image.Resampling.BICUBIC, fillcolor=fill)
+        self.last_params = dict(rotation_deg=float(rotation_deg), scale=float(scale), shear_deg=float(shear_deg))
+        return result
+
+    def forward(self, img):
+        # Keep rotation/scale RNG order identical to the pipelined tracked transforms.
+        scale = random.uniform(*self.scale_range)
+        angle = random.uniform(*self.rotation_range)
+        shear = float(torch.empty(1).uniform_(*self.shear_range).item())
+        return self.render(img, angle, scale, shear)
+
+
 class TransformWithParams:
     """
     包装transform pipeline，能够提取旋转和缩放参数
@@ -183,10 +257,13 @@ class TransformWithParams:
         self.transforms = transform_list
         self.rotation_transform = None
         self.scale_transform = None
+        self.grid_sampling_transform = None
 
         # 找到旋转和缩放的transform
         for t in transform_list:
-            if isinstance(t, RandomRotationWithParams):
+            if isinstance(t, GridSamplingQueryGeometry):
+                self.grid_sampling_transform = t
+            elif isinstance(t, RandomRotationWithParams):
                 self.rotation_transform = t
             elif isinstance(t, RandomScaleWithParams):
                 self.scale_transform = t
@@ -203,6 +280,8 @@ class TransformWithParams:
         Returns:
             dict: {'rotation_deg': float, 'scale': float}
         """
+        if self.grid_sampling_transform is not None:
+            return self.grid_sampling_transform.get_params()
         params = {}
         if self.rotation_transform is not None:
             params['rotation_deg'] = self.rotation_transform.get_last_angle()
@@ -232,9 +311,12 @@ def mk_pil_transform_with_params(
         center_crop=False,
         rand_crop=False,
         pad_mode=None,
+        geometry_method='pipelined',
+        prefilter_resolution_factor=2.0,
 ):
     """
-    创建带参数追踪的transform pipeline
+    创建带参数追踪的transform pipeline。geometry_method 默认为 pipelined；
+    grid_sampling 将几何操作合并，prefilter_resolution_factor 控制抗混叠中间分辨率。
 
     Transform顺序（重要）：
     1. Resize/Crop: 初始尺寸调整
@@ -253,65 +335,83 @@ def mk_pil_transform_with_params(
     Returns:
         TransformWithParams: 可以获取变换参数的transform对象
     """
-    transform_list = [transforms.Resize(imgsize2net)]
+    if geometry_method not in {'pipelined', 'grid_sampling'}:
+        raise ValueError(f'Unknown query geometry pipeline: {geometry_method}')
+    if geometry_method == 'grid_sampling':
+        if not center_crop or rand_crop:
+            raise ValueError('Grid sampling geometry requires center_crop=True and rand_crop=False')
+        affine = dict(affine_para or {}) if rand_affine else {}
+        for key, neutral in [('degrees', 0), ('translate', (0., 0.)), ('scale', (1., 1.))]:
+            value = affine.get(key, neutral)
+            if np.any(np.asarray(value) != np.asarray(neutral)):
+                raise ValueError(f'Grid sampling geometry does not support extra affine {key}')
+        shear = affine.get('shear', 5 if rand_affine else 0)
+        if not isinstance(shear, (int, float)):
+            raise ValueError('Grid sampling geometry currently accepts scalar x-shear only')
+        rotation = (-rotation_range_deg, rotation_range_deg) if isinstance(rotation_range_deg, (int, float)) else rotation_range_deg
+        transform_list = [GridSamplingQueryGeometry(
+            imgsize2net, rotation if rand_rot else (0, 0), scale_range if rand_scale else (1, 1),
+            (-shear, shear), pad_mode, prefilter_resolution_factor)]
+    else:
+        transform_list = [transforms.Resize(imgsize2net)]
 
-    if center_crop:
-        transform_list.append(transforms.CenterCrop(imgsize2net))
-    if rand_crop:
-        transform_list.append(transforms.RandomCrop(imgsize2net))
+        if center_crop:
+            transform_list.append(transforms.CenterCrop(imgsize2net))
+        if rand_crop:
+            transform_list.append(transforms.RandomCrop(imgsize2net))
 
-    pad_mode_norm = str(pad_mode).lower() if pad_mode is not None else None
-    use_zero = pad_mode_norm in {"zero", "zeros", "0"}
+        pad_mode_norm = str(pad_mode).lower() if pad_mode is not None else None
+        use_zero = pad_mode_norm in {"zero", "zeros", "0"}
 
-    # ===== 关键顺序：先缩放，再旋转 =====
-    # 1. 先添加可追踪的缩放（避免旋转导致的内容丢失）
-    if rand_scale:
-        transform_list.append(RandomScaleWithParams(
-            scale_range=scale_range,
-            base_size=imgsize2net,
-            pad_mode=pad_mode_norm,
-        ))
+        # ===== 关键顺序：先缩放，再旋转 =====
+        # 1. 先添加可追踪的缩放（避免旋转导致的内容丢失）
+        if rand_scale:
+            transform_list.append(RandomScaleWithParams(
+                scale_range=scale_range,
+                base_size=imgsize2net,
+                pad_mode=pad_mode_norm,
+            ))
 
-    # 2. 再添加可追踪的旋转
-    if rand_rot:
-        transform_list.append(RandomRotationWithParams(
-            degrees=rotation_range_deg,
-            interpolation=transforms.InterpolationMode.BILINEAR,
-            fill=0 if use_zero else "mean"
-        ))
-
-    # 其他标准transforms
-    if rand_affine:
-        default_affine_params = {
-            'degrees': 0,  # 旋转已经单独处理
-            'translate': (0, 0),
-            'scale': (1.0, 1.0),  # 缩放已经单独处理
-            'shear': 5,
-        }
-        if affine_para:
-            if not isinstance(affine_para, dict):
-                raise TypeError("affine_para必须是一个字典。")
-            default_affine_params.update(affine_para)
-
-        def _mean_fill_from_stats(mean_vals):
-            if mean_vals is None:
-                return 0
-            mean_arr = np.asarray(mean_vals, dtype=float)
-            if mean_arr.ndim == 0:
-                val = float(mean_arr)
-                return int(round(val * 255.0)) if val <= 1.0 else int(round(val))
-            if mean_arr.max() <= 1.0:
-                mean_arr = mean_arr * 255.0
-            return tuple(int(round(x)) for x in mean_arr.tolist())
-
-        fill_val = 0 if use_zero else _mean_fill_from_stats(mean)
-        transform_list.append(
-            transforms.RandomAffine(
-                **default_affine_params,
+        # 2. 再添加可追踪的旋转
+        if rand_rot:
+            transform_list.append(RandomRotationWithParams(
+                degrees=rotation_range_deg,
                 interpolation=transforms.InterpolationMode.BILINEAR,
-                fill=fill_val
+                fill=0 if use_zero else "mean"
+            ))
+
+        # 其他标准transforms
+        if rand_affine:
+            default_affine_params = {
+                'degrees': 0,  # 旋转已经单独处理
+                'translate': (0, 0),
+                'scale': (1.0, 1.0),  # 缩放已经单独处理
+                'shear': 5,
+            }
+            if affine_para:
+                if not isinstance(affine_para, dict):
+                    raise TypeError("affine_para必须是一个字典。")
+                default_affine_params.update(affine_para)
+
+            def _mean_fill_from_stats(mean_vals):
+                if mean_vals is None:
+                    return 0
+                mean_arr = np.asarray(mean_vals, dtype=float)
+                if mean_arr.ndim == 0:
+                    val = float(mean_arr)
+                    return int(round(val * 255.0)) if val <= 1.0 else int(round(val))
+                if mean_arr.max() <= 1.0:
+                    mean_arr = mean_arr * 255.0
+                return tuple(int(round(x)) for x in mean_arr.tolist())
+
+            fill_val = 0 if use_zero else _mean_fill_from_stats(mean)
+            transform_list.append(
+                transforms.RandomAffine(
+                    **default_affine_params,
+                    interpolation=transforms.InterpolationMode.BILINEAR,
+                    fill=fill_val
+                )
             )
-        )
 
     if color_jitter:
         transform_list.append(

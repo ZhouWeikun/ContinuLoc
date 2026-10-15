@@ -13,6 +13,8 @@ import argparse
 import yaml
 import os
 import copy
+import json
+from pathlib import Path
 
 
 def print_config_summary(opt, header="最终配置:"):
@@ -40,9 +42,69 @@ def print_config_summary(opt, header="最终配置:"):
     opt._config_summary_printed = True
 
 
+def _expand_manifest_scenes(settings):
+    """Resolve dataset paths against the manifest, preserving selection order."""
+    expanded = copy.deepcopy(settings)
+    manifest_path = Path(settings['dataset_manifest']).expanduser().resolve()
+    with manifest_path.open(encoding='utf-8') as stream:
+        manifest = json.load(stream)
+    registry = manifest['scene_registry']
+    dataset = manifest['dataset_name']
+    if settings.get('dataset_name', dataset) != dataset:
+        raise ValueError("dataset_name does not match dataset_manifest")
+    single = settings.get('selected_scene_name')
+    multiple = settings.get('selected_scene_names')
+    if single is not None and multiple is not None:
+        raise ValueError("Specify selected_scene_name OR selected_scene_names, not both")
+    requested = [single] if single is not None else multiple
+    if requested is None:
+        requested = manifest.get('default_scene_names', [])
+    if not isinstance(requested, (list, tuple)) or not requested:
+        raise ValueError("selected_scene_names must be a nonempty list")
+    names, scenes = [], []
+    def resolve_path(value, directory=False):
+        path = Path(value).expanduser()
+        path = (manifest_path.parent / path).resolve()
+        if not (path.is_dir() if directory else path.is_file()):
+            raise FileNotFoundError(f"Manifest path does not exist: {path}")
+        return str(path)
+    for item in requested:
+        name = str(item).strip()
+        if name.isdigit():
+            name = f"{dataset}_{int(name):02d}"
+        if name not in registry:
+            raise ValueError(f"Unknown scene {item!r}; available: {', '.join(registry)}")
+        if name in names:
+            raise ValueError(f"Duplicate scene selection: {name}")
+        scene = copy.deepcopy(registry[name])
+        if scene.get('status') != 'prepared':
+            raise ValueError(f"Scene {name} is not prepared")
+        scene['name'] = name
+        for key in ('p_satinfo_json', 'p_uavinfo_json', 'p_uav_geocsv'):
+            scene[key] = resolve_path(scene[key])
+        scene['uavimgs_dir'] = resolve_path(scene['uavimgs_dir'], directory=True)
+        if not scene.get('satellite_filepaths'):
+            raise ValueError(f"Scene {name} has no satellite_filepaths")
+        scene['satellite_filepaths'] = [resolve_path(v) for v in scene['satellite_filepaths']]
+        names.append(name)
+        scenes.append(scene)
+    expanded.update(dataset_name=dataset, dataset_manifest=str(manifest_path), scenes=scenes)
+    if single is not None:
+        expanded['selected_scene_name'] = names[0]
+    else:
+        expanded['selected_scene_names'] = names
+    return expanded
+
+
 def _expand_selected_scene_config(scenes_setting):
     if not isinstance(scenes_setting, dict):
         return scenes_setting
+
+    if scenes_setting.get('dataset_manifest'):
+        return _expand_manifest_scenes(scenes_setting)
+
+    if scenes_setting.get('selected_scene_names') is not None:
+        raise ValueError('selected_scene_names requires dataset_manifest')
 
     scene_registry = scenes_setting.get('scene_registry', None)
     if not isinstance(scene_registry, dict) or not scene_registry:
@@ -142,6 +204,7 @@ def get_parse(print_summary=True):
     parser.add_argument('--inherit_stage1_scope', default='network,data', type=str, help='Stage 2从Stage 1 YAML继承的范围: network,data,scenes,hardware，可用逗号分隔')
     parser.add_argument('--inherit_stage2_yaml', default="", type=str, help='Stage 3初始化时继承Stage 2网络结构参数的opts/base yaml路径')
     parser.add_argument('--inherit_stage2_scope', default='network', type=str, help='Stage 3从Stage 2 YAML继承的范围: network,data,scenes,hardware，可用逗号分隔')
+    parser.add_argument('--selected_scene_names', nargs='+', default=None, help='覆盖 manifest 场景列表，支持名称或编号')
     parser.add_argument('--selected_scene_name', default="", type=str, help='覆盖 scenes_setting.selected_scene_name')
     parser.add_argument(
         '--inherit_stage1_fm_stage2',
@@ -308,7 +371,7 @@ def get_parse(print_summary=True):
     # 先将合并后的YAML配置应用到opt对象
     for section, params in final_merged_config.items():
         if section == 'scenes_setting':
-            setattr(opt, 'scenes_setting', _expand_selected_scene_config(params))
+            setattr(opt, 'scenes_setting', copy.deepcopy(params))
             continue
 
         if isinstance(params, dict):
@@ -342,10 +405,17 @@ def get_parse(print_summary=True):
             }]
         }
     else:
+        if getattr(opt, 'selected_scene_name', '') and getattr(opt, 'selected_scene_names', None):
+            raise ValueError('Use only one scene selection CLI option')
+        if getattr(opt, 'selected_scene_names', None):
+            opt.scenes_setting = copy.deepcopy(opt.scenes_setting)
+            opt.scenes_setting.pop('selected_scene_name', None)
+            opt.scenes_setting['selected_scene_names'] = opt.selected_scene_names
         if getattr(opt, 'selected_scene_name', ''):
             if not isinstance(opt.scenes_setting, dict):
                 raise TypeError("selected_scene_name override requires scenes_setting to be a dict")
             opt.scenes_setting = copy.deepcopy(opt.scenes_setting)
+            opt.scenes_setting.pop('selected_scene_names', None)
             opt.scenes_setting['selected_scene_name'] = opt.selected_scene_name
         opt.scenes_setting = _expand_selected_scene_config(opt.scenes_setting)
 
@@ -423,7 +493,7 @@ def get_parse(print_summary=True):
                         'stage3_basin_shuffle', 'stage3_basin_progress',
                         'inherit_stage1_yaml', 'inherit_stage1_scope',
                         'inherit_stage2_yaml', 'inherit_stage2_scope',
-                        'selected_scene_name',
+                        'selected_scene_name', 'selected_scene_names',
                         'inherit_stage1_fm_stage2', 'inherit_stage1_fm_stage2_scope',
                         'tensorboard',
                         'save_freq', 'val', 'val_freq',

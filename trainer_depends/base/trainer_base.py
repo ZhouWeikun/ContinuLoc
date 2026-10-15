@@ -170,12 +170,14 @@ class BaseTrainer:
             # 创建SatDataset
             sat_dataset = SatDataset(
                 p_satinfo_json=scene['p_satinfo_json'],
+                satellite_filepaths=scene.get('satellite_filepaths'),
                 p_uav_geocsv=scene['p_uav_geocsv'],
                 imgsize2net=opt.imgsize2net,
                 split_train_ratio=opt.split_train_ratio,
                 split_mode=opt.split_mode,
                 name=scene_name,
                 device=sat_device,
+                enable_scale_filter=getattr(opt, "enable_scale_filter", False),
                 pad_mode=pad_mode,
             )
             self.sat_datasets[scene_name] = sat_dataset
@@ -183,9 +185,12 @@ class BaseTrainer:
             # 创建UAVDataset (train)
             uav_dataset_train = UAVDataset(
                 p_uavinfo_json=scene['p_uavinfo_json'],
+                uavimgs_dir=scene.get('uavimgs_dir'),
                 p_uav_geocsv=scene['p_uav_geocsv'],
                 sat_dataset=sat_dataset,
                 stage='train',
+                query_geometry_method=getattr(opt, 'query_geometry_method', 'pipelined'),
+                query_prefilter_resolution_factor=getattr(opt, 'query_prefilter_resolution_factor', 2.0),
                 name=scene_name,
                 device='cpu',
                 pad_mode=pad_mode,
@@ -198,6 +203,7 @@ class BaseTrainer:
             # 创建UAVDataset (test)
             uav_dataset_test = UAVDataset(
                 p_uavinfo_json=scene['p_uavinfo_json'],
+                uavimgs_dir=scene.get('uavimgs_dir'),
                 p_uav_geocsv=scene['p_uav_geocsv'],
                 sat_dataset=sat_dataset,
                 stage='test',

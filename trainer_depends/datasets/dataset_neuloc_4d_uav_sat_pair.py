@@ -8,7 +8,13 @@ from torch.utils.data import Dataset
 import numpy as np
 import os
 
-from .dataset_neuloc_4d  import UAVDataset, SatDataset
+if __package__ in (None, ""):
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from trainer_depends.datasets.dataset_neuloc_4d import UAVDataset, SatDataset
+else:
+    from .dataset_neuloc_4d import UAVDataset, SatDataset
 from torch.utils.data import DataLoader
 import time
 
@@ -587,160 +593,354 @@ def collate_uav_sat_pair(batch, sat_dataset=None, reject_batch_aware=False, reje
     return dict2return
 
 
-# 使用示例
+# -----------------------------------------------------------------------------
+# DataLoader inspection figure configuration
+# -----------------------------------------------------------------------------
+PAIR_FIGURE_SIZE = (16, 5)
+PAIR_FIGURE_DPI = 150
+PAIR_PANEL_TITLES = ('UAV query (actual batch)', 'Satellite positive (actual batch)',
+                     '50/50 overlay', 'Checkerboard')
+PAIR_TITLE = '{scene} | {stage} | row {row}: {filename} | augmentation={augmentation}'
+PAIR_COORDS = ('raw [nr,nc,rot,scale]={raw}\nquery={query}\n'
+               'sat_ref={reference} | max coordinate difference={difference:.2g}')
+PAIR_TITLE_FONT_SIZE = 11
+PAIR_PANEL_FONT_SIZE = 10
+PAIR_COORD_FONT_SIZE = 8
+PAIR_CHECKER_TILE = 28
+COMPARE_ANGLE = 37.0
+COMPARE_SCALE = 1.03
+COMPARE_SHEAR = 7.0
+COMPARE_TITLES = ('Pipelined: repeated bilinear', 'Grid sampling: original, no prefilter', 'Grid sampling: antialias + affine', 'Satellite positive (same coords)')
+COMPARE_TITLE = '{filename} | rotation={angle} deg | scale={scale} | shear={shear} deg'
+PAIR_GALLERY_TITLE = 'DataLoader query / satellite positive alignment'
+PAIR_GALLERY_NOTE = ('图像来自真实 DataLoader batch，仅反归一化显示，没有额外配准。'
+                     '训练图可能包含旋转、缩放、剪切和擦除增强；测试图无随机增强。'
+                     '坐标相等只验证传递一致，不能证明图像像素已正确对齐。')
+
+
+def _collate_pair_inspection(samples):
+    batch = collate_uav_sat_pair(samples)
+    batch['coords_sat_pos'] = torch.stack([sample['coords_sat_pos'] for sample in samples])
+    batch['satmap_id_pos'] = [int(sample['satmap_id_pos']) for sample in samples]
+    return batch
+
+
+def _save_pair_batch_figures(batch, indices, uav_dataset, sat_dataset, output_dir):
+    """Inspect the tensors returned by DataLoader, without resampling or realignment."""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    from pathlib import Path
+
+    def denormalize(tensor, mean, std):
+        array = tensor.detach().cpu().permute(1, 2, 0).numpy()
+        return np.clip(array * np.asarray(std) + np.asarray(mean), 0, 1)
+
+    stage = uav_dataset.stage
+    row_indices = getattr(uav_dataset, 'uav_row_indices_' + stage)
+    raw_coords = getattr(uav_dataset, 'uav_coords_4d_torch_' + stage)
+    paths = getattr(uav_dataset, 'uavimg_paths_' + stage)
+    destination = Path(output_dir) / uav_dataset.name / stage
+    destination.mkdir(parents=True, exist_ok=True)
+    records = []
+    for offset, index in enumerate(indices):
+        row = int(row_indices[index])
+        filename = Path(paths[index]).name
+        sat_id = batch['satmap_id_pos'][offset]
+        query = denormalize(batch['uavimgs'][offset], uav_dataset.uavinfo_dict['mean'], uav_dataset.uavinfo_dict['std'])
+        reference = denormalize(batch['satimgs_pos'][offset], sat_dataset.satinfo_dict['means_normalized'][sat_id],
+                                sat_dataset.satinfo_dict['stds_normalized'][sat_id])
+        yy, xx = np.indices(query.shape[:2])
+        checker = ((yy // PAIR_CHECKER_TILE + xx // PAIR_CHECKER_TILE) % 2).astype(bool)[..., None]
+        images = (query, reference, .5 * query + .5 * reference, np.where(checker, query, reference))
+        coords = batch['coords_uav'][offset].detach().cpu().numpy()
+        sat_coords = batch['coords_sat_pos'][offset].detach().cpu().numpy()
+        raw = raw_coords[index].detach().cpu().numpy()
+        difference = float(np.max(np.abs(coords - sat_coords)))
+        if difference > 1e-6:
+            raise AssertionError('full_4d query and positive coordinates differ')
+        fig, axes = plt.subplots(1, 4, figsize=PAIR_FIGURE_SIZE)
+        for ax, title, image in zip(axes, PAIR_PANEL_TITLES, images):
+            ax.imshow(image)
+            ax.axhline((image.shape[0]-1)/2, color='yellow', alpha=.4, linewidth=.5)
+            ax.axvline((image.shape[1]-1)/2, color='yellow', alpha=.4, linewidth=.5)
+            ax.set_title(title, fontsize=PAIR_PANEL_FONT_SIZE)
+            ax.axis('off')
+        augmentation = stage == 'train' and uav_dataset.use_augmentation
+        fig.suptitle(PAIR_TITLE.format(scene=uav_dataset.name, stage=stage, row=row, filename=filename,
+                                      augmentation=augmentation), fontsize=PAIR_TITLE_FONT_SIZE)
+        fmt = lambda value: np.array2string(value, precision=6, separator=', ', suppress_small=True)
+        fig.text(.5, .015, PAIR_COORDS.format(raw=fmt(raw), query=fmt(coords), reference=fmt(sat_coords),
+                                            difference=difference), ha='center', fontsize=PAIR_COORD_FONT_SIZE)
+        fig.subplots_adjust(top=.84, bottom=.19, left=.01, right=.99, wspace=.04)
+        png = destination / f'{row:06d}_{Path(filename).stem}.png'
+        fig.savefig(png, dpi=PAIR_FIGURE_DPI)
+        plt.close(fig)
+        records.append(dict(scene=uav_dataset.name, stage=stage, row_index=row, filename=filename,
+                            dataset_index=index, augmentation=augmentation, raw_coords=raw.tolist(),
+                            query_coords=coords.tolist(), sat_ref_coords=sat_coords.tolist(),
+                            coordinate_max_difference=difference, satellite_path=sat_dataset.satinfo_dict['filepaths'][sat_id],
+                            png=str(png.relative_to(output_dir))))
+    return records
+
+
+def _write_pair_gallery(output_dir, records):
+    import html
+    import json
+    from pathlib import Path
+    output = Path(output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+    items = []
+    for record in records:
+        label = PAIR_TITLE.format(scene=record['scene'], stage=record['stage'], row=record['row_index'],
+                                  filename=record['filename'], augmentation=record['augmentation'])
+        png = html.escape(record['png'], quote=True)
+        items.append(f'<p>{html.escape(label)}</p><a href="{png}"><img loading="lazy" width="100%" src="{png}"></a>')
+    (output/'index.html').write_text('<!doctype html><meta charset="utf-8"><title>'+PAIR_GALLERY_TITLE+'</title><h1>'+
+                                    PAIR_GALLERY_TITLE+'</h1><p>'+PAIR_GALLERY_NOTE+'</p>'+''.join(items))
+    (output/'index.json').write_text(json.dumps(records, ensure_ascii=False, indent=2)+'\n')
+
+
+def _compare_query_geometry(uav_dataset, sat_dataset, args):
+    """Fixed-parameter DataLoader comparison; timings exclude plotting and satellite loading."""
+    import json
+    from pathlib import Path
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    from torchvision import transforms
+    from trainer_depends.utils.util_data_transform_with_params import mk_pil_transform_with_params
+
+    output = args.compare_geometry_dir / uav_dataset.name
+    output.mkdir(parents=True, exist_ok=True)
+    uav_dataset.switch_stage('train')
+    original_transform = uav_dataset.uav_transform_train
+    original_augmentation = uav_dataset.use_augmentation
+    indices = np.linspace(0, len(uav_dataset)-1, min(args.samples,len(uav_dataset)), dtype=int).tolist()
+    results = {};timings = {}
+    try:
+        uav_dataset.use_augmentation = True
+        for mode, pipeline, factor in [('pipelined','pipelined',2), ('grid_sampling_direct','grid_sampling',0), ('grid_sampling_antialias','grid_sampling',2)]:
+            transform = mk_pil_transform_with_params(
+                uav_dataset.uavinfo_dict['mean'],uav_dataset.uavinfo_dict['std'],imgsize2net=args.image_size,
+                rand_rot=True,rotation_range_deg=(COMPARE_ANGLE,COMPARE_ANGLE),rand_scale=True,
+                scale_range=(COMPARE_SCALE,COMPARE_SCALE),rand_affine=True,
+                affine_para={'degrees':0,'translate':(0.,0.),'scale':(1.,1.),'shear':COMPARE_SHEAR},
+                center_crop=True,geometry_method=pipeline,prefilter_resolution_factor=factor)
+            # Fix shear as well; no colour jitter or erasure in this geometry comparison.
+            for operation in transform.transforms:
+                if isinstance(operation, transforms.RandomAffine):
+                    operation.shear=[COMPARE_SHEAR,COMPARE_SHEAR,0.,0.]
+            if transform.grid_sampling_transform is not None:
+                transform.grid_sampling_transform.shear_range=(COMPARE_SHEAR,COMPARE_SHEAR)
+            uav_dataset.uav_transform_train=transform
+            pair=UAVSatPairDataset(uav_dataset,sat_dataset,device='cpu',n_neg_per_query=0)
+            # Warm both image decoding and transform before timing; OS cache remains uncontrolled.
+            pair[indices[0]]
+            elapsed=[]
+            for repeat in range(3):
+                loader=DataLoader(pair,batch_size=args.batch_size,sampler=indices,num_workers=0,collate_fn=_collate_pair_inspection)
+                start=time.perf_counter();batches=list(loader);elapsed.append(time.perf_counter()-start)
+            results[mode]={key:torch.cat([b[key] for b in batches]) for key in ['uavimgs','satimgs_pos','coords_uav','coords_sat_pos']}
+            seconds=float(np.median(elapsed))
+            timings[mode]={'seconds_median':seconds,'samples_per_second':len(indices)/seconds,'repeats_seconds':elapsed}
+        for mode in results:
+            torch.testing.assert_close(results[mode]['coords_uav'],results['pipelined']['coords_uav'])
+            torch.testing.assert_close(results[mode]['satimgs_pos'],results['pipelined']['satimgs_pos'])
+        mean=np.asarray(uav_dataset.uavinfo_dict['mean']);std=np.asarray(uav_dataset.uavinfo_dict['std'])
+        records=[]
+        for j,index in enumerate(indices):
+            filename=Path(uav_dataset.uavimg_paths_train[index]).name
+            images=[np.clip(results[mode]['uavimgs'][j].permute(1,2,0).numpy()*std+mean,0,1) for mode in results]
+            # These scenes have one satellite map. Use the actual sampled satellite normalization.
+            sat=results['pipelined']['satimgs_pos'][j].permute(1,2,0).numpy()
+            sat=np.clip(sat*np.asarray(sat_dataset.satinfo_dict['stds_normalized'][0])+np.asarray(sat_dataset.satinfo_dict['means_normalized'][0]),0,1)
+            images.append(sat)
+            fig,axes=plt.subplots(1,4,figsize=PAIR_FIGURE_SIZE)
+            for ax,image,title in zip(axes,images,COMPARE_TITLES):
+                ax.imshow(image,interpolation='nearest');ax.set_title(title,fontsize=PAIR_PANEL_FONT_SIZE);ax.axis('off')
+            fig.suptitle(COMPARE_TITLE.format(filename=filename,angle=COMPARE_ANGLE,scale=COMPARE_SCALE,shear=COMPARE_SHEAR),fontsize=PAIR_TITLE_FONT_SIZE)
+            fig.tight_layout();png=output/(Path(filename).stem+'.png');fig.savefig(png,dpi=PAIR_FIGURE_DPI);plt.close(fig)
+            records.append({'filename':filename,'png':str(png.relative_to(args.compare_geometry_dir))})
+        report={'scene':uav_dataset.name,'timings':timings,'parameters':{'rotation_deg':COMPARE_ANGLE,'scale':COMPARE_SCALE,'shear_deg':COMPARE_SHEAR},'records':records,
+                'note':'CPU num_workers=0; median of 3 small-sample passes, excludes satellite initialization and plotting; not full training throughput.'}
+        (output/'comparison.json').write_text(json.dumps(report,indent=2)+'\n')
+        print(f"[{uav_dataset.name}] geometry comparison throughput: {timings}",flush=True)
+        return report
+    finally:
+        uav_dataset.uav_transform_train=original_transform
+        uav_dataset.use_augmentation=original_augmentation
+
+
+def _smoke_test_scene(entry, dataset_root, args):
+    """Exercise real scene loading, both splits, pair sampling and collation on CPU."""
+    import json
+    import random
+    import tempfile
+    from pathlib import Path
+
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    resolve = lambda value: str((dataset_root / value).resolve())
+    sat_meta = json.loads(Path(resolve(entry['p_satinfo_json'])).read_text())
+    uav_meta = json.loads(Path(resolve(entry['p_uavinfo_json'])).read_text())
+    sat_meta['filepaths'] = [resolve(value) for value in entry['satellite_filepaths']]
+    uav_meta['uavimgs_dir'] = resolve(entry['uavimgs_dir'])
+    uav_meta['uavimgs_geocsv_path'] = resolve(entry['p_uav_geocsv'])
+    uav_meta['geo_rc_epsg_code'] = entry['geo_rc_epsg_code']
+    started = time.perf_counter()
+    print(f"\n[{entry['name']}] loading satellite and UAV data...", flush=True)
+    # Override embedded paths without rewriting source metadata.
+    with tempfile.TemporaryDirectory(prefix='visloc_read_test_') as temporary:
+        sat_path = Path(temporary) / 'satellite.json'
+        uav_path = Path(temporary) / 'uav.json'
+        sat_path.write_text(json.dumps(sat_meta))
+        uav_path.write_text(json.dumps(uav_meta))
+        sat_dataset = SatDataset(
+            p_satinfo_json=str(sat_path), p_uav_geocsv=resolve(entry['p_uav_geocsv']),
+            imgsize2net=args.image_size, device='cpu', name=entry['name'],
+            split_train_ratio=args.train_ratio, split_mode=args.split_mode,
+            enable_scale_filter=args.enable_scale_filter,
+        )
+        uav_dataset = UAVDataset(
+            p_uavinfo_json=str(uav_path), p_uav_geocsv=resolve(entry['p_uav_geocsv']),
+            sat_dataset=sat_dataset, imgsize2net=args.image_size, device='cpu',
+            name=entry['name'], dataset_name='visloc', use_augmentation=args.augmentation,
+            query_geometry_method=args.query_geometry_method,
+            query_prefilter_resolution_factor=args.query_prefilter_resolution_factor,
+            split_train_ratio=args.train_ratio, split_mode=args.split_mode,
+        )
+        train_rows = set(uav_dataset.uav_row_indices_train.tolist())
+        test_rows = set(uav_dataset.uav_row_indices_test.tolist())
+        if train_rows & test_rows or train_rows | test_rows != set(uav_dataset.uav_row_indices.tolist()):
+            raise AssertionError('Train/test rows overlap or do not cover retained samples.')
+        for path in uav_dataset.uavimg_paths:
+            if not Path(path).is_file():
+                raise FileNotFoundError(path)
+        result = {
+            'scene': entry['name'], 'csv': entry['p_uav_geocsv'],
+            'enable_scale_filter': sat_dataset.enable_scale_filter,
+            'augmentation': args.augmentation,
+            'query_geometry_method': args.query_geometry_method,
+            'query_prefilter_resolution_factor': args.query_prefilter_resolution_factor,
+            'quality_valid': int(uav_dataset.uav_df['aff2d_corrected'].astype(str).str.lower().isin(['true', '1', 't', 'yes', 'y']).sum()),
+            'selected_before_edges': int(sat_dataset.selected_mask.sum()),
+            'retained_after_edges': len(uav_dataset.uav_row_indices),
+            'train': len(train_rows), 'test': len(test_rows),
+            'scale_ref_m': float(sat_dataset.scale_ref_m),
+            'scale_range_before_edges': sat_dataset.satimgsize_scale_to_ref_m_boundary.tolist(),
+            'scale_range_after_edges': [float(uav_dataset.uav_scales.min()), float(uav_dataset.uav_scales.max())],
+            'mad_diagnostic_count': int(sat_dataset.scale_diagnostics['mad_outlier_mask'].sum()),
+            'train_csv_rows': sorted(train_rows), 'test_csv_rows': sorted(test_rows),
+            'checks': [],
+            'visualizations': [],
+        }
+        if args.compare_geometry_dir:
+            if len(sat_dataset.satmaps) != 1:
+                raise ValueError('Geometry comparison currently requires a single satellite map.')
+            result['geometry_comparison'] = _compare_query_geometry(uav_dataset, sat_dataset, args)
+        for stage in ('train', 'test'):
+            uav_dataset.switch_stage(stage)
+            if not len(uav_dataset):
+                raise AssertionError(f'{stage} split is empty')
+            indices = np.linspace(0, len(uav_dataset) - 1, min(args.samples, len(uav_dataset)), dtype=int).tolist()
+            for negatives, rejection in ((1, True), (1, False), (0, False)):
+                pair_dataset = UAVSatPairDataset(
+                    uav_dataset, sat_dataset, device='cpu', n_neg_per_query=negatives,
+                    nrc_reject_sampling=rejection,
+                )
+                loader = DataLoader(
+                    pair_dataset, batch_size=args.batch_size, sampler=indices,
+                    num_workers=0, collate_fn=_collate_pair_inspection,
+                )
+                batches = 0
+                seen = 0
+                shapes = None
+                for batch in loader:
+                    b = batch['uavimgs'].shape[0]
+                    if args.visualize_dir and negatives == 1 and rejection:
+                        result['visualizations'].extend(_save_pair_batch_figures(
+                            batch, indices[seen:seen+b], uav_dataset, sat_dataset, args.visualize_dir))
+                    seen += b
+                    for key in ('uavimgs', 'satimgs_pos'):
+                        if tuple(batch[key].shape) != (b, 3, args.image_size, args.image_size):
+                            raise AssertionError(f'{key}: unexpected shape {batch[key].shape}')
+                    if tuple(batch['coords_uav'].shape) != (b, 4):
+                        raise AssertionError('Invalid UAV coordinate shape')
+                    if negatives and ('satimgs_neg' not in batch or batch['satimgs_neg'].shape[0] != b):
+                        raise AssertionError('Missing negative image batch')
+                    if not negatives and 'satimgs_neg' in batch:
+                        raise AssertionError('Unexpected negative images')
+                    for key, value in batch.items():
+                        if torch.is_tensor(value) and not torch.isfinite(value).all():
+                            raise AssertionError(f'Nonfinite output: {key}')
+                    shapes = {key: list(value.shape) for key, value in batch.items() if torch.is_tensor(value)}
+                    batches += 1
+                result['checks'].append(dict(stage=stage, negatives=negatives, rejection=rejection,
+                                             sampled_indices=indices, batches=batches, shapes=shapes))
+                print(f"[{entry['name']}] {stage}, negatives={negatives}, rejection={rejection}: "
+                      f"{batches} batches OK; {shapes}", flush=True)
+        result['seconds'] = round(time.perf_counter() - started, 2)
+        print(f"[{entry['name']}] selected={result['selected_before_edges']} -> "
+              f"after edges={result['retained_after_edges']}, train/test={result['train']}/{result['test']}", flush=True)
+        return result
+
+
+def main():
+    """Run: python -m trainer_depends.datasets.dataset_neuloc_4d_uav_sat_pair --scenes 08 11"""
+    import argparse
+    import gc
+    import json
+    from pathlib import Path
+
+    parser = argparse.ArgumentParser(description='Read real scenes and verify UAV/satellite pair batches on CPU.')
+    parser.add_argument('--manifest', type=Path, default=Path('/home/data/zwk/dataset_UAV-VisLoc/dataset_manifest.json'))
+    parser.add_argument('--scenes', nargs='+', default=['08', '11'])
+    parser.add_argument('--samples', type=int, default=4, help='Evenly spaced samples per split and sampling mode.')
+    parser.add_argument('--batch-size', type=int, default=2)
+    parser.add_argument('--image-size', type=int, default=224)
+    parser.add_argument('--train-ratio', type=float, default=0.8)
+    parser.add_argument('--split-mode', choices=['interval', 'segment', 'random'], default='interval')
+    parser.add_argument('--seed', type=int, default=0)
+    parser.add_argument('--threads', type=int, default=4)
+    parser.add_argument('--enable-scale-filter', action='store_true')
+    parser.add_argument('--query-geometry-method', choices=['pipelined','grid_sampling'], default='pipelined')
+    parser.add_argument('--query-prefilter-resolution-factor', type=float, default=2.0,
+                        help='Intermediate resolution multiplier for grid_sampling; 0 disables prefiltering.')
+    parser.add_argument('--compare-geometry-dir', type=Path, help='Compare fixed-parameter pipelined/direct/prefiltered geometry and CPU batch timing.')
+    parser.add_argument('--augmentation', action='store_true', help='Also exercise train-time random augmentation.')
+    parser.add_argument('--visualize-dir', type=Path, help='Save actual DataLoader query/positive pairs, overlays and gallery.')
+    parser.add_argument('--report', type=Path, help='Optional JSON report with counts, original CSV rows and batch shapes.')
+    args = parser.parse_args()
+    if min(args.samples, args.batch_size, args.image_size, args.threads) <= 0:
+        parser.error('samples, batch-size, image-size and threads must be positive')
+    torch.set_num_threads(args.threads)
+    manifest = json.loads(args.manifest.read_text())
+    dataset_root = args.manifest.resolve().parent
+    results = []
+    for scene in args.scenes:
+        name = scene if scene.startswith('visloc_') else 'visloc_' + scene.zfill(2)
+        entry = manifest['scene_registry'][name]
+        if entry['status'] != 'prepared':
+            raise ValueError(f'Scene is not prepared: {name}')
+        results.append(_smoke_test_scene(entry, dataset_root, args))
+        gc.collect()
+    if args.compare_geometry_dir:
+        import html
+        items = [item for result in results for item in result['geometry_comparison']['records']]
+        args.compare_geometry_dir.mkdir(parents=True, exist_ok=True)
+        (args.compare_geometry_dir/'index.html').write_text('<!doctype html><meta charset="utf-8">'+''.join(
+            '<p>'+html.escape(item['filename'])+'</p><img width="100%" loading="lazy" src="'+html.escape(item['png'],quote=True)+'">' for item in items))
+    if args.visualize_dir:
+        _write_pair_gallery(args.visualize_dir, [item for result in results for item in result['visualizations']])
+        print(f'Gallery: {args.visualize_dir / "index.html"}', flush=True)
+    if args.report:
+        args.report.parent.mkdir(parents=True, exist_ok=True)
+        args.report.write_text(json.dumps({'manifest': str(args.manifest.resolve()), 'results': results}, indent=2) + '\n')
+        print(f'Report: {args.report}', flush=True)
+    print(f'PASS: {len(results)} scenes; real image decoding and train/test pair batches verified.', flush=True)
+
+
 if __name__ == '__main__':
-
-    # 初始化数据集
-    sat_dataset = SatDataset(
-        p_satinfo_json='/home/data/zwk/dataset_UAV-VisLoc/04/satellite04_epsg32650_res03m_multi_tifs.json',
-        p_uav_geocsv='/home/data/zwk/dataset_UAV-VisLoc/04/uavimgs_geo_corrected.csv',
-        imgsize2net=224,
-    )
-
-    uav_dataset = UAVDataset(
-        p_uavinfo_json='/home/data/zwk/dataset_UAV-VisLoc/04/uavimgs_metainfo.json',
-        p_uav_geocsv='/home/data/zwk/dataset_UAV-VisLoc/04/uavimgs_geo_corrected.csv',
-        sat_dataset=sat_dataset,
-        stage='train'
-    )
-
-    # ========== 测试1：n_neg=1, 使用bounded sampling ==========
-    print("=" * 50)
-    print("测试1：n_neg=1 + bounded sampling（正样本领域拒绝采样）")
-    print("=" * 50)
-
-    pair_dataset = UAVSatPairDataset(
-        uav_dataset=uav_dataset,
-        sat_dataset=sat_dataset,
-        device='cuda',
-        n_neg_per_query=1,
-        nrc_reject_sampling=True,  # 使用正样本领域拒绝采样
-    )
-
-    print(f"Dataset size: {len(pair_dataset)}")
-
-    # 测试单个样本
-    print("\n测试单个样本...")
-    sample = pair_dataset[0]
-    print(f"UAV image shape: {sample['uavimg'].shape}")
-    print(f"Sat pos image shape: {sample['satimgs_pos'].shape}")
-    print(f"Sat neg image shape: {sample['satimgs_neg'].shape}")
-    print(f"Coords shape: {sample['coords_uav'].shape}")
-
-    # 测试DataLoader
-    print("\n测试DataLoader (num_workers=0)...")
-    dataloader = DataLoader(
-        pair_dataset,
-        batch_size=8,
-        shuffle=True,
-        num_workers=0,
-        collate_fn=collate_uav_sat_pair,
-    )
-
-    for i, batch in enumerate(dataloader):
-        print(f"Batch {i}:")
-        print(f"  UAV images: {batch['uavimgs'].shape}")
-        print(f"  Sat pos images: {batch['satimgs_pos'].shape}")
-        print(f"  Sat neg images: {batch['satimgs_neg'].shape}")
-        print(f"  Coords: {batch['coords_uav'].shape}")
-        if i >= 1:
-            break
-
-    # ========== 测试2：n_neg=1, 使用random sampling ==========
-    print("\n" + "=" * 50)
-    print("测试2：n_neg=1 + random sampling（完全随机采样）")
-    print("=" * 50)
-
-    pair_dataset_random = UAVSatPairDataset(
-        uav_dataset=uav_dataset,
-        sat_dataset=sat_dataset,
-        device='cuda',
-        n_neg_per_query=1,
-        nrc_reject_sampling=False,  # 使用完全随机采样
-    )
-
-    print(f"\n测试单个样本...")
-    sample = pair_dataset_random[0]
-    print(f"UAV image shape: {sample['uavimg'].shape}")
-    print(f"Sat pos image shape: {sample['satimgs_pos'].shape}")
-    print(f"Sat neg image shape: {sample['satimgs_neg'].shape}")
-    print(f"Coords shape: {sample['coords_uav'].shape}")
-
-    # ========== 测试3：n_neg=0 ==========
-    print("\n" + "=" * 50)
-    print("测试3：n_neg=0（只采样正样本）")
-    print("=" * 50)
-
-    pair_dataset_no_neg = UAVSatPairDataset(
-        uav_dataset=uav_dataset,
-        sat_dataset=sat_dataset,
-        device='cuda',
-        n_neg_per_query=0,
-    )
-
-    print(f"\n测试单个样本...")
-    sample = pair_dataset_no_neg[0]
-    print(f"UAV image shape: {sample['uavimg'].shape}")
-    print(f"Sat pos image shape: {sample['satimgs_pos'].shape}")
-    print(f"Sat neg image: {sample['satimgs_neg']}")  # 应该是None
-    print(f"Coords shape: {sample['coords_uav'].shape}")
-
-    # 测试DataLoader
-    print("\n测试DataLoader...")
-    dataloader_no_neg = DataLoader(
-        pair_dataset_no_neg,
-        batch_size=8,
-        shuffle=True,
-        num_workers=0,
-        collate_fn=collate_uav_sat_pair,
-    )
-
-    for i, batch in enumerate(dataloader_no_neg):
-        print(f"Batch {i}:")
-        print(f"  UAV images: {batch['uavimgs'].shape}")
-        print(f"  Sat pos images: {batch['satimgs_pos'].shape}")
-        print(f"  Sat neg images: {batch['satimgs_neg']}")  # 应该是None
-        print(f"  Coords: {batch['coords_uav'].shape}")
-        if i >= 1:
-            break
-
-    # ========== 测试4：多进程加速 ==========
-    print("\n" + "=" * 50)
-    print("测试4：多进程加速对比")
-    print("=" * 50)
-
-    # 单进程
-    print("\n单进程 (num_workers=0)...")
-    dataloader_single = DataLoader(
-        pair_dataset,
-        batch_size=32,
-        shuffle=True,
-        num_workers=0,
-        collate_fn=collate_uav_sat_pair,
-    )
-
-    start_time = time.time()
-    for i, batch in enumerate(dataloader_single):
-        if i >= 5:
-            break
-    time_single = time.time() - start_time
-    print(f"Time: {time_single:.2f}s for 5 batches")
-
-    # 多进程
-    print("\n多进程 (num_workers=4)...")
-    dataloader_multi = DataLoader(
-        pair_dataset,
-        batch_size=32,
-        shuffle=True,
-        num_workers=4,
-        collate_fn=collate_uav_sat_pair,
-        persistent_workers=True,
-    )
-
-    start_time = time.time()
-    for i, batch in enumerate(dataloader_multi):
-        if i >= 5:
-            break
-    time_multi = time.time() - start_time
-    print(f"Time: {time_multi:.2f}s for 5 batches")
-    print(f"Speedup: {time_single / time_multi:.2f}x")
+    main()
