@@ -12,10 +12,12 @@ import torch.nn.functional as F
 from continuloc.evaluation.query_rotation_search import (
     absolute_heading_error_rad,
     attach_heading_errors,
-    circular_heading_from_responses,
+    exponential_heading_from_responses,
+    feature_chord_distance,
     normalized_base_grid,
     require_scene_mean_scale,
     resolve_forward_variant_limit,
+    resolve_heading_temperature,
     resolve_retrieval_mode,
     rotation_scale_grid,
     rotation_search_ranking,
@@ -101,26 +103,32 @@ class RotationSearchMathTest(unittest.TestCase):
         self.assertEqual(int(indices[0, 0]), 1)
         self.assertTrue(torch.allclose(heading, torch.tensor([-math.pi / 2]), atol=1e-4))
 
-    def test_circular_mean_wraps_across_zero(self):
+    def test_equal_peaks_across_zero_stay_local(self):
         angles = rotation_steps_rad(10)
         responses = torch.zeros(1, 36)
         responses[0, 0] = 1.0
         responses[0, -1] = 1.0
-        heading = circular_heading_from_responses(responses, angles)
-        # Equal weight at warp 0 and 350 degrees is a warp of -5 degrees, so heading is +5.
+        heading = exponential_heading_from_responses(responses, angles, temperature=0.02)
+        # Equal distance at warp 0 and 350 degrees averages to a warp of -5 degrees.
         self.assertAlmostEqual(float(torch.rad2deg(heading)), 5.0, delta=0.05)
         error = absolute_heading_error_rad(heading, torch.deg2rad(torch.tensor(5.0)))
         self.assertLess(float(error), math.radians(0.05))
 
-    def test_negative_cosine_is_shifted_before_weighting(self):
-        angles = torch.deg2rad(torch.tensor([0.0, 10.0, 20.0]))
-        responses = torch.tensor([[-1.0, 0.0, -0.5]])
-        heading = circular_heading_from_responses(responses, angles)
-        weights = torch.tensor([0.0, 2.0 / 3.0, 1.0 / 3.0])
-        expected_warp = torch.atan2(
-            (weights * torch.sin(angles)).sum(), (weights * torch.cos(angles)).sum(),
-        )
+    def test_sharp_temperature_stays_near_the_peak(self):
+        angles = torch.deg2rad(torch.tensor([0.0, 10.0, 180.0]))
+        responses = torch.tensor([[0.99, 0.98, 0.50]])
+        heading = exponential_heading_from_responses(responses, angles, temperature=0.02)
+        distance = feature_chord_distance(responses)
+        weights = torch.softmax(-distance / 0.02, dim=-1)
+        delta = torch.atan2(torch.sin(angles), torch.cos(angles))
+        expected_warp = (weights * delta).sum()
         self.assertAlmostEqual(float(heading), float(-expected_warp), places=5)
+        # The opposite angle has a much larger feature distance, so it does not pull the mean.
+        self.assertLess(abs(float(torch.rad2deg(heading))), 1.0)
+        self.assertGreater(float(weights[0, 0]), 0.9)
+        with self.assertRaises(ValueError):
+            resolve_heading_temperature(0)
+        self.assertEqual(resolve_heading_temperature(None), 0.02)
 
     def test_heading_summary_follows_val_and_test_order(self):
         errors = torch.deg2rad(torch.tensor([0.0, 10.0, 30.0]))

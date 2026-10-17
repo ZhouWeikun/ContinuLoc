@@ -2,8 +2,9 @@
 
 The gallery stays north-aligned. Each query is scaled to the scene mean and
 encoded at equally spaced rotations. Location scores sum the cosine responses
-over those rotations. The heading is the circular mean of the responses at the
-winning location, returned in the same convention as ``rotdeg_fm_north_anticlock``.
+over those rotations. Heading at the winning location is a softmax over feature
+distance, averaged as a local deviation from the peak angle, then returned in
+the same convention as ``rotdeg_fm_north_anticlock``.
 """
 import math
 
@@ -111,28 +112,44 @@ def rotation_steps_rad(step_deg):
     return torch.deg2rad(degrees).to(dtype=torch.float32)
 
 
-def circular_heading_from_responses(responses, warp_angles_rad):
+def resolve_heading_temperature(value, default=0.02):
+    """Softmax temperature on feature distance. Smaller values stay nearer the peak."""
+    if value is None or str(value).strip() == "":
+        value = default
+    temperature = float(value)
+    if not math.isfinite(temperature) or temperature <= 0.0:
+        raise ValueError(f"heading_temperature must be positive and finite, got {value!r}")
+    return temperature
+
+
+def feature_chord_distance(cosine):
+    """Euclidean distance between L2-normalized features, from their cosine."""
+    clipped = torch.as_tensor(cosine).clamp(-1.0, 1.0)
+    return torch.sqrt(torch.clamp(2.0 - 2.0 * clipped, min=0.0))
+
+
+def exponential_heading_from_responses(responses, warp_angles_rad, temperature=0.02):
     """Estimate heading at one location from cosine responses.
 
-    ``responses`` is ``[B, A]``. Cosines may be negative, so weights are the
-    responses shifted to a minimum of zero. A flat response uses equal weights.
-    The returned heading is the negated circular mean of the warp angles, matching
-    the north-alignment warp ``rot = -heading``.
+    ``responses`` is ``[B, A]``. Distance is ``sqrt(max(0, 2 - 2 cos))``.
+    Weights are ``softmax(-distance / temperature)``. The estimate is the peak
+    warp plus the weighted local deviation, then negated to match the
+    north-alignment warp ``rot = -heading``.
     """
     if responses.ndim != 2:
         raise ValueError(f"responses must have shape [B, A], got {tuple(responses.shape)}")
+    temperature = resolve_heading_temperature(temperature)
     angles = torch.as_tensor(warp_angles_rad, dtype=responses.dtype, device=responses.device).reshape(-1)
     if responses.shape[-1] != angles.numel():
         raise ValueError(
             f"responses have {responses.shape[-1]} angles, warp grid has {angles.numel()}"
         )
-    shifted = responses - responses.min(dim=-1, keepdim=True).values
-    denom = shifted.sum(dim=-1, keepdim=True)
-    uniform = torch.full_like(shifted, 1.0 / responses.shape[-1])
-    weights = torch.where(denom > 0, shifted / denom.clamp_min(torch.finfo(shifted.dtype).tiny), uniform)
-    sin_sum = (weights * torch.sin(angles)).sum(dim=-1)
-    cos_sum = (weights * torch.cos(angles)).sum(dim=-1)
-    warp_hat = torch.atan2(sin_sum, cos_sum)
+    distance = feature_chord_distance(responses)
+    weights = torch.softmax(-distance / responses.new_tensor(temperature), dim=-1)
+    peak_angle = angles.index_select(0, responses.argmax(dim=-1))
+    delta = angles - peak_angle[:, None]
+    delta = torch.atan2(torch.sin(delta), torch.cos(delta))
+    warp_hat = peak_angle + (weights * delta).sum(dim=-1)
     return torch.atan2(torch.sin(-warp_hat), torch.cos(-warp_hat))
 
 
@@ -141,10 +158,11 @@ def absolute_heading_error_rad(estimated, target):
     return torch.atan2(torch.sin(delta), torch.cos(delta)).abs()
 
 
-def rotation_search_ranking(responses, warp_angles_rad, top_k):
+def rotation_search_ranking(responses, warp_angles_rad, top_k, temperature=0.02):
     """Rank gallery locations by the sum of per-angle cosine responses.
 
-    ``responses`` is ``[B, A, G]``. The heading uses only the winning location.
+    ``responses`` is ``[B, A, G]``. The heading uses only the winning location
+    and the exponential distance weights.
     """
     if responses.ndim != 3:
         raise ValueError(f"responses must have shape [B, A, G], got {tuple(responses.shape)}")
@@ -156,7 +174,7 @@ def rotation_search_ranking(responses, warp_angles_rad, top_k):
     chosen = responses.gather(
         2, indices[:, :1].unsqueeze(1).expand(-1, responses.shape[1], 1)
     ).squeeze(-1)
-    heading = circular_heading_from_responses(chosen, warp_angles_rad)
+    heading = exponential_heading_from_responses(chosen, warp_angles_rad, temperature)
     return indices, heading
 
 

@@ -5,6 +5,7 @@ scenes: [] # Empty: all scenes from checkpoint opts.yaml.
 evaluation:
   retrieval_mode: north_aligned # north_aligned | query_rotation_search
   query_rotation_step_deg: 10 # query_rotation_search only; must divide 360
+  heading_temperature: 0.02 # softmax temperature on feature distance; smaller stays nearer the peak
   val_gallery_scale_mode: scene_mean # scene_mean | multiscale; rotation search requires scene_mean
   val_gallery_scale_levels: 3 # multiscale only, >= 2
   val_gallery_scale_spacing: linear # linear | log, bin centers in scene scale bounds

@@ -26,6 +26,7 @@ from continuloc.evaluation.query_rotation_search import (
     normalized_base_grid,
     require_scene_mean_scale,
     resolve_forward_variant_limit,
+    resolve_heading_temperature,
     resolve_retrieval_mode,
     rotation_scale_grid,
     rotation_search_ranking,
@@ -439,7 +440,8 @@ class MinimalStage1VisualEncoderTrainer(BaseTrainer):
 
         ``north_aligned`` rotates each query with its recorded heading.
         ``query_rotation_search`` scales queries to the scene mean and sums
-        cosine responses over discrete query rotations.
+        cosine responses over discrete query rotations. Heading at the winning
+        location uses a softmax over feature distance.
         """
         if init_datasets or not hasattr(self, "sat_datasets"):
             self._init_datasets(create_train_loader=False)
@@ -465,8 +467,12 @@ class MinimalStage1VisualEncoderTrainer(BaseTrainer):
             require_scene_mean_scale(getattr(self.opt, "val_gallery_scale_mode", "scene_mean"))
             step_deg = getattr(self.opt, "query_rotation_step_deg", 10.0)
             warp_angles = rotation_steps_rad(step_deg)
+            heading_temperature = resolve_heading_temperature(
+                getattr(self.opt, "heading_temperature", None),
+            )
             print(
-                f"Retrieval: query_rotation_search, step_deg={float(step_deg):g}, angles={warp_angles.numel()}",
+                f"Retrieval: query_rotation_search, step_deg={float(step_deg):g}, "
+                f"angles={warp_angles.numel()}, heading_temperature={heading_temperature:g}",
                 flush=True,
             )
         results = {}
@@ -510,7 +516,9 @@ class MinimalStage1VisualEncoderTrainer(BaseTrainer):
                     responses = self._rotation_search_responses(
                         uavimgs, scale_f, warp_angles, feats_gallery, forward_limit,
                     )
-                    indices, heading_hat = rotation_search_ranking(responses, warp_angles, top_k)
+                    indices, heading_hat = rotation_search_ranking(
+                        responses, warp_angles, top_k, heading_temperature,
+                    )
                     heading_errors.append(absolute_heading_error_rad(heading_hat, coords_uav[:, 2].cpu()))
                 else:
                     rot_align = -coords_uav[:, 2] if query_rot2uniform else None

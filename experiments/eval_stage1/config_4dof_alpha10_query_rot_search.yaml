@@ -5,6 +5,7 @@ scenes: [] # Empty: all scenes from checkpoint opts.yaml.
 evaluation:
   retrieval_mode: query_rotation_search
   query_rotation_step_deg: 10
+  heading_temperature: 0.02
   val_gallery_scale_mode: scene_mean
   val_query_rot2uniform: false
   val_query_scale2uniform: true
