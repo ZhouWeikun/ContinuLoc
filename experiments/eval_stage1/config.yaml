@@ -11,7 +11,8 @@ evaluation:
   val_query_rot2uniform: true # north_aligned: use recorded heading to align query north
   val_query_scale2uniform: false # north_aligned: normalize query to scene mean scale
   val_overlap: 0.5
-  val_chunk_size: 32
+  max_forward_variants: 512 # images per network forward
+  val_chunk_size: 32 # used only when max_forward_variants is omitted
   batchsize_uav: 32
   num_worker_eval: 4
   satmaps_on_cpu: true

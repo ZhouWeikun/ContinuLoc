@@ -7,17 +7,51 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import torch
+import torch.nn.functional as F
 
 from continuloc.evaluation.query_rotation_search import (
     absolute_heading_error_rad,
     attach_heading_errors,
     circular_heading_from_responses,
+    normalized_base_grid,
     require_scene_mean_scale,
+    resolve_forward_variant_limit,
     resolve_retrieval_mode,
+    rotation_scale_grid,
     rotation_search_ranking,
     rotation_steps_rad,
     summarize_heading_errors,
+    variant_coordinates,
 )
+
+
+class SamplingGridTest(unittest.TestCase):
+    def test_rotation_scale_grid_matches_affine_grid(self):
+        base = normalized_base_grid(5, 7)
+        rot = torch.tensor([0.3, -1.2, 0.0])
+        scale = torch.tensor([1.0, 0.8, 1.4])
+        grid = rotation_scale_grid(base, rot, scale)
+        theta = torch.zeros(3, 2, 3)
+        cos_v, sin_v = torch.cos(rot), torch.sin(rot)
+        theta[:, 0, 0] = cos_v * scale
+        theta[:, 0, 1] = sin_v * scale
+        theta[:, 1, 0] = -sin_v * scale
+        theta[:, 1, 1] = cos_v * scale
+        reference = F.affine_grid(theta, (3, 1, 5, 7), align_corners=False)
+        self.assertTrue(torch.allclose(grid, reference, atol=1e-6))
+        image = torch.arange(3 * 5 * 7, dtype=torch.float32).reshape(3, 1, 5, 7)
+        sampled = F.grid_sample(image, grid, align_corners=False, padding_mode="border")
+        sampled_ref = F.grid_sample(image, reference, align_corners=False, padding_mode="border")
+        self.assertTrue(torch.allclose(sampled, sampled_ref, atol=1e-5))
+
+    def test_variants_are_query_major_and_forward_cap_is_512(self):
+        query_index, angle_index = variant_coordinates(torch.tensor([0, 35, 36, 511]), 36)
+        self.assertEqual(query_index.tolist(), [0, 0, 1, 14])
+        self.assertEqual(angle_index.tolist(), [0, 35, 0, 7])
+        self.assertEqual(resolve_forward_variant_limit(512, 32), 512)
+        self.assertEqual(resolve_forward_variant_limit(None, 32), 32)
+        with self.assertRaises(ValueError):
+            resolve_forward_variant_limit(0, 32)
 
 
 class RotationGridTest(unittest.TestCase):

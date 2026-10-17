@@ -9,6 +9,7 @@ evaluation:
   val_query_rot2uniform: false
   val_query_scale2uniform: true
   val_overlap: 0.5
+  max_forward_variants: 512
   val_chunk_size: 32
   batchsize_uav: 32
   num_worker_eval: 4

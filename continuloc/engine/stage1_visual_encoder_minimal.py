@@ -23,11 +23,15 @@ from continuloc.evaluation.partitioned_recall import PartitionedRecall
 from continuloc.evaluation.query_rotation_search import (
     absolute_heading_error_rad,
     attach_heading_errors,
+    normalized_base_grid,
     require_scene_mean_scale,
+    resolve_forward_variant_limit,
     resolve_retrieval_mode,
+    rotation_scale_grid,
     rotation_search_ranking,
     rotation_steps_rad,
     summarize_heading_errors,
+    variant_coordinates,
 )
 import torch.nn.functional as F
 import tqdm
@@ -322,30 +326,25 @@ class MinimalStage1VisualEncoderTrainer(BaseTrainer):
         return F.normalize(feats, dim=-1)
 
     @staticmethod
+    def _sample_queries(imgs, rot_rad, scale_f, base_grid):
+        """Sample the original images through a rotated and scaled grid."""
+        grid = rotation_scale_grid(base_grid, rot_rad, scale_f)
+        return F.grid_sample(
+            imgs, grid, mode="bilinear", padding_mode="border", align_corners=False,
+        )
+
+    @staticmethod
     def _warp_uav_imgs(imgs, rot_rad=None, scale_f=None):
         if rot_rad is None and scale_f is None:
             return imgs
-        bsz = imgs.shape[0]
-        device = imgs.device
+        batch_size = imgs.shape[0]
         dtype = imgs.dtype
         if rot_rad is None:
-            rot_rad = torch.zeros(bsz, device=device, dtype=dtype)
-        else:
-            rot_rad = rot_rad.to(device=device, dtype=dtype)
+            rot_rad = torch.zeros(batch_size, device=imgs.device, dtype=dtype)
         if scale_f is None:
-            scale_f = torch.ones(bsz, device=device, dtype=dtype)
-        else:
-            scale_f = scale_f.to(device=device, dtype=dtype)
-
-        theta = torch.zeros(bsz, 2, 3, device=device, dtype=dtype)
-        cos_v = torch.cos(rot_rad)
-        sin_v = torch.sin(rot_rad)
-        theta[:, 0, 0] = cos_v * scale_f
-        theta[:, 0, 1] = sin_v * scale_f
-        theta[:, 1, 0] = -sin_v * scale_f
-        theta[:, 1, 1] = cos_v * scale_f
-        grid = F.affine_grid(theta, imgs.size(), align_corners=False)
-        return F.grid_sample(imgs, grid, mode="bilinear", padding_mode="border", align_corners=False)
+            scale_f = torch.ones(batch_size, device=imgs.device, dtype=dtype)
+        base_grid = normalized_base_grid(imgs.shape[-2], imgs.shape[-1], dtype=dtype, device=imgs.device)
+        return MinimalStage1VisualEncoderTrainer._sample_queries(imgs, rot_rad, scale_f, base_grid)
 
     def _build_scene_gallery(self, sat_dataset, overlap, chunk_size):
         gallery_scale = float(sat_dataset.satimgsize_scale_to_ref_m_mean)
@@ -396,25 +395,43 @@ class MinimalStage1VisualEncoderTrainer(BaseTrainer):
                 feats.append(self._encode_imgs_eval(satimgs.to(self.device)).cpu())
         return coords_gallery.cpu(), torch.cat(feats, dim=0), gallery_scale
 
-    def _rotation_search_responses(self, uavimgs, scale_f, warp_angles, feats_gallery, chunk_size):
-        """Cosine responses for each query rotation. Both feature sets are L2-normalized."""
-        batch_size = uavimgs.shape[0]
-        responses = torch.empty(
-            batch_size, warp_angles.numel(), feats_gallery.shape[0], dtype=torch.float32,
-        )
+    def _rotation_search_responses(self, uavimgs, scale_f, warp_angles, feats_gallery, forward_limit):
+        """Sample every query rotation from the original image, then encode in chunks.
+
+        Variants are query-major: query 0 at all angles, then query 1, and so on.
+        Each network forward receives at most ``forward_limit`` sampled images.
+        """
+        n_queries = uavimgs.shape[0]
+        n_angles = warp_angles.numel()
+        n_gallery = feats_gallery.shape[0]
+        responses = torch.empty(n_queries, n_angles, n_gallery, dtype=torch.float32)
+        if n_queries == 0 or n_angles == 0:
+            return responses
         gallery = feats_gallery.to(device=uavimgs.device)
         angles = warp_angles.to(device=uavimgs.device, dtype=uavimgs.dtype)
+        base_grid = normalized_base_grid(
+            uavimgs.shape[-2], uavimgs.shape[-1], dtype=uavimgs.dtype, device=uavimgs.device,
+        )
+        n_variants = n_queries * n_angles
+        print(
+            f"Query variants: {n_queries} x {n_angles} = {n_variants}, forward_limit={int(forward_limit)}",
+            flush=True,
+        )
         with torch.no_grad():
-            for angle_index, angle in enumerate(angles):
-                warped = self._warp_uav_imgs(
-                    uavimgs, rot_rad=angle.expand(batch_size), scale_f=scale_f,
+            for start in range(0, n_variants, int(forward_limit)):
+                flat_index = torch.arange(
+                    start, min(start + int(forward_limit), n_variants), device=uavimgs.device,
                 )
-                encoded = []
-                for start in range(0, batch_size, int(chunk_size)):
-                    encoded.append(self._encode_imgs_eval(warped[start:start + int(chunk_size)]))
-                feats_q = torch.cat(encoded, dim=0)
-                gallery_match = gallery.to(dtype=feats_q.dtype)
-                responses[:, angle_index] = (feats_q @ gallery_match.transpose(0, 1)).detach().cpu()
+                query_index, angle_index = variant_coordinates(flat_index, n_angles)
+                sampled = self._sample_queries(
+                    uavimgs.index_select(0, query_index),
+                    angles.index_select(0, angle_index),
+                    scale_f.index_select(0, query_index),
+                    base_grid,
+                )
+                feats_q = self._encode_imgs_eval(sampled)
+                similarity = (feats_q @ gallery.to(dtype=feats_q.dtype).transpose(0, 1)).detach().cpu()
+                responses[query_index.cpu(), angle_index.cpu()] = similarity
         return responses
 
     def test(self, init_datasets=True, load_ckpt=True, restore_train=True):
@@ -435,7 +452,10 @@ class MinimalStage1VisualEncoderTrainer(BaseTrainer):
             model.eval()
 
         overlap = float(getattr(self.opt, "val_overlap", 0.5))
-        chunk_size = int(getattr(self.opt, "val_chunk_size", 1024))
+        forward_limit = resolve_forward_variant_limit(
+            getattr(self.opt, "max_forward_variants", None),
+            getattr(self.opt, "val_chunk_size", 1024),
+        )
         k_values = [1, 5, 10, 20, 50]
         retrieval_mode = resolve_retrieval_mode(getattr(self.opt, "retrieval_mode", "north_aligned"))
         query_rot2uniform = bool(getattr(self.opt, "val_query_rot2uniform", True))
@@ -458,12 +478,19 @@ class MinimalStage1VisualEncoderTrainer(BaseTrainer):
             coords_gallery, feats_gallery, gallery_scale = self._build_scene_gallery(
                 sat_dataset,
                 overlap=overlap,
-                chunk_size=chunk_size,
+                chunk_size=forward_limit,
             )
 
+            use_variant_cap = getattr(self.opt, "max_forward_variants", None) not in (None, "")
+            if retrieval_mode == "query_rotation_search":
+                query_batch = max(len(uav_dataset), 1)
+            elif use_variant_cap:
+                query_batch = forward_limit
+            else:
+                query_batch = int(self.opt.batchsize_uav)
             uav_loader = torch.utils.data.DataLoader(
                 uav_dataset,
-                batch_size=int(self.opt.batchsize_uav),
+                batch_size=query_batch,
                 num_workers=int(getattr(self.opt, "num_worker_eval", 0)),
                 shuffle=False,
                 drop_last=False,
@@ -481,7 +508,7 @@ class MinimalStage1VisualEncoderTrainer(BaseTrainer):
                 if retrieval_mode == "query_rotation_search":
                     scale_f = gallery_scale / coords_uav[:, 3].clamp(min=1e-6)
                     responses = self._rotation_search_responses(
-                        uavimgs, scale_f, warp_angles, feats_gallery, chunk_size,
+                        uavimgs, scale_f, warp_angles, feats_gallery, forward_limit,
                     )
                     indices, heading_hat = rotation_search_ranking(responses, warp_angles, top_k)
                     heading_errors.append(absolute_heading_error_rad(heading_hat, coords_uav[:, 2].cpu()))

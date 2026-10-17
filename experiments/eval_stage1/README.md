@@ -15,6 +15,7 @@ Model architecture, scene list and train/val/test split are inherited from the c
 - `val_gallery_scale_mode: multiscale`: under `north_aligned`, use `val_gallery_scale_levels` bin centers across the scene scale bounds, spaced by `val_gallery_scale_spacing: linear | log`. Each position/scale pair is its own candidate. `query_rotation_search` rejects this mode.
 - `val_query_rot2uniform`: `north_aligned` only. True uses the recorded heading to rotate north. False keeps the original query heading and does not build rotated candidates.
 - `val_query_scale2uniform`: `north_aligned` only. True normalizes the query footprint to the scene mean. `query_rotation_search` always does this.
+- `max_forward_variants`: maximum images in one network forward. Rotation and scale change a precomputed sampling grid; the original query is sampled directly and the sampled batch is capped at this size. `query_rotation_search` loads every query in a scene, expands all angles, then encodes those variants in chunks of this size. The default evaluation value is 512. When the key is omitted, forwards keep using `val_chunk_size`.
 
 The same entrypoint supports 2DoF/4DoF trained encoders by changing `checkpoint` and evaluation settings. Training `pair_alignment_mode` does not automatically select the evaluation protocol. An omitted `retrieval_mode` stays `north_aligned`, including evaluation called during training. Recall's spatial tolerance remains the existing scene half-image radius. Val and test are reported separately.
 

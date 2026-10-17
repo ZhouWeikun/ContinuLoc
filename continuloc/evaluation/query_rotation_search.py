@@ -40,6 +40,64 @@ def require_scene_mean_scale(gallery_scale_mode):
     return mode
 
 
+def resolve_forward_variant_limit(max_forward_variants, val_chunk_size=1024):
+    """Images per network forward. An unset cap keeps the existing chunk size."""
+    if max_forward_variants is None or str(max_forward_variants).strip() == "":
+        limit = int(val_chunk_size)
+    else:
+        limit = int(max_forward_variants)
+    if limit < 1:
+        raise ValueError(f"max_forward_variants must be positive, got {max_forward_variants!r}")
+    return limit
+
+
+def normalized_base_grid(height, width, dtype=torch.float32, device=None):
+    """Output sampling grid matching ``affine_grid(..., align_corners=False)``."""
+    height = int(height)
+    width = int(width)
+    if height < 1 or width < 1:
+        raise ValueError(f"sampling grid size must be positive, got {(height, width)}")
+    ys = torch.linspace(-1, 1, height, device=device, dtype=dtype) * ((height - 1) / height)
+    xs = torch.linspace(-1, 1, width, device=device, dtype=dtype) * ((width - 1) / width)
+    yy, xx = torch.meshgrid(ys, xs, indexing="ij")
+    return torch.stack((xx, yy), dim=-1)
+
+
+def rotation_scale_grid(base_grid, rot_rad, scale_f):
+    """Apply rotation and scale to a precomputed ``[H, W, 2]`` sampling grid.
+
+    The result is ``[B, H, W, 2]`` in the same convention as ``_warp_uav_imgs``:
+    ``x' = scale * (cos x + sin y)``, ``y' = scale * (-sin x + cos y)``.
+    """
+    if base_grid.shape[-1] != 2:
+        raise ValueError(f"base grid must end with xy, got {tuple(base_grid.shape)}")
+    rot = torch.as_tensor(rot_rad).to(dtype=base_grid.dtype, device=base_grid.device).reshape(-1)
+    scale = torch.as_tensor(scale_f).to(dtype=base_grid.dtype, device=base_grid.device).reshape(-1)
+    if rot.numel() != scale.numel():
+        raise ValueError("rotation and scale must describe the same number of samples")
+    if rot.numel() == 0:
+        return base_grid.new_empty((0, *base_grid.shape))
+    x = base_grid[..., 0]
+    y = base_grid[..., 1]
+    cos_v = torch.cos(rot)[:, None, None]
+    sin_v = torch.sin(rot)[:, None, None]
+    scale = scale[:, None, None]
+    x_s = scale * (cos_v * x + sin_v * y)
+    y_s = scale * (-sin_v * x + cos_v * y)
+    return torch.stack((x_s, y_s), dim=-1)
+
+
+def variant_coordinates(flat_index, n_angles):
+    """Map a flattened query-major variant index to ``(query, angle)``."""
+    n_angles = int(n_angles)
+    if n_angles < 1:
+        raise ValueError("n_angles must be positive")
+    flat_index = torch.as_tensor(flat_index)
+    query_index = torch.div(flat_index, n_angles, rounding_mode="floor")
+    angle_index = flat_index - query_index * n_angles
+    return query_index, angle_index
+
+
 def rotation_steps_rad(step_deg):
     """Warp angles 0, step, ... strictly below 360 degrees, in radians."""
     step = float(step_deg)
