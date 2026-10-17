@@ -1,10 +1,11 @@
 """Discrete query-rotation retrieval at one scene-mean scale.
 
 The gallery stays north-aligned. Each query is scaled to the scene mean and
-encoded at equally spaced rotations. Location scores sum the cosine responses
-over those rotations. Heading at the winning location is a softmax over feature
-distance, averaged as a local deviation from the peak angle, then returned in
-the same convention as ``rotdeg_fm_north_anticlock``.
+encoded at equally spaced rotations. Each angle contributes
+``exp(-distance / temperature)`` with the same temperature used for heading.
+Location score is the sum of those 36 responses. Heading at the winning
+location is their softmax, averaged as a local deviation from the peak angle,
+then returned in the same convention as ``rotdeg_fm_north_anticlock``.
 """
 import math
 
@@ -158,15 +159,29 @@ def absolute_heading_error_rad(estimated, target):
     return torch.atan2(torch.sin(delta), torch.cos(delta)).abs()
 
 
-def rotation_search_ranking(responses, warp_angles_rad, top_k, temperature=0.02):
-    """Rank gallery locations by the sum of per-angle cosine responses.
+def exponential_location_scores(responses, temperature=0.02):
+    """Sum ``exp(-distance / temperature)`` over angles.
 
-    ``responses`` is ``[B, A, G]``. The heading uses only the winning location
-    and the exponential distance weights.
+    ``responses`` is ``[B, A, G]`` cosine similarities. The returned score is
+    ``logsumexp(-distance / temperature)`` over angles, which ranks locations
+    identically to the sum and stays finite when the temperature is small.
     """
     if responses.ndim != 3:
         raise ValueError(f"responses must have shape [B, A, G], got {tuple(responses.shape)}")
-    scores = responses.sum(dim=1)
+    temperature = resolve_heading_temperature(temperature)
+    distance = feature_chord_distance(responses).to(dtype=torch.float64)
+    return torch.logsumexp(-distance / temperature, dim=1)
+
+
+def rotation_search_ranking(responses, warp_angles_rad, top_k, temperature=0.02):
+    """Rank gallery locations by the summed exponential angle responses.
+
+    ``responses`` is ``[B, A, G]``. A small distance at any angle raises that
+    location's score. The heading uses only the winning location.
+    """
+    if responses.ndim != 3:
+        raise ValueError(f"responses must have shape [B, A, G], got {tuple(responses.shape)}")
+    scores = exponential_location_scores(responses, temperature)
     k = min(int(top_k), scores.shape[-1])
     if k < 1:
         raise ValueError("top_k must be positive")

@@ -439,9 +439,9 @@ class MinimalStage1VisualEncoderTrainer(BaseTrainer):
         """Recall@K against a north-aligned satellite gallery.
 
         ``north_aligned`` rotates each query with its recorded heading.
-        ``query_rotation_search`` scales queries to the scene mean and sums
-        cosine responses over discrete query rotations. Heading at the winning
-        location uses a softmax over feature distance.
+        ``query_rotation_search`` scales queries to the scene mean. Location
+        score sums ``exp(-distance / temperature)`` over the discrete query
+        rotations. Heading at the winning location uses that same temperature.
         """
         if init_datasets or not hasattr(self, "sat_datasets"):
             self._init_datasets(create_train_loader=False)
@@ -472,7 +472,8 @@ class MinimalStage1VisualEncoderTrainer(BaseTrainer):
             )
             print(
                 f"Retrieval: query_rotation_search, step_deg={float(step_deg):g}, "
-                f"angles={warp_angles.numel()}, heading_temperature={heading_temperature:g}",
+                f"angles={warp_angles.numel()}, heading_temperature={heading_temperature:g}, "
+                f"location_score=sum(exp(-distance/temperature))",
                 flush=True,
             )
         results = {}

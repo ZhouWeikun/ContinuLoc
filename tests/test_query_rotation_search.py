@@ -13,6 +13,7 @@ from continuloc.evaluation.query_rotation_search import (
     absolute_heading_error_rad,
     attach_heading_errors,
     exponential_heading_from_responses,
+    exponential_location_scores,
     feature_chord_distance,
     normalized_base_grid,
     require_scene_mean_scale,
@@ -88,20 +89,22 @@ class RetrievalModeTest(unittest.TestCase):
 
 
 class RotationSearchMathTest(unittest.TestCase):
-    def test_summed_response_selects_the_location_and_its_angle(self):
-        # Location 0 has the strongest single angle but the smaller sum.
-        # Location 1 wins on the sum, and its mass is centered at a warp of 90 degrees.
+    def test_exponential_sum_prefers_the_closest_angle(self):
+        # Location 1 has the larger cosine sum. Location 0 has one much smaller
+        # feature distance, so the shared temperature gives it the higher score.
         angles = rotation_steps_rad(10)
         responses = torch.full((1, 36, 2), -0.2)
-        responses[0, :, 0] = -0.2
         responses[0, 0, 0] = 0.99
         center = 9  # 90 degrees
         responses[0, center - 1, 1] = 0.4
         responses[0, center, 1] = 0.8
         responses[0, center + 1, 1] = 0.4
-        indices, heading = rotation_search_ranking(responses, angles, top_k=2)
-        self.assertEqual(int(indices[0, 0]), 1)
-        self.assertTrue(torch.allclose(heading, torch.tensor([-math.pi / 2]), atol=1e-4))
+        self.assertGreater(float(responses[0, :, 1].sum()), float(responses[0, :, 0].sum()))
+        scores = exponential_location_scores(responses, temperature=0.02)
+        self.assertGreater(float(scores[0, 0]), float(scores[0, 1]))
+        indices, heading = rotation_search_ranking(responses, angles, top_k=2, temperature=0.02)
+        self.assertEqual(int(indices[0, 0]), 0)
+        self.assertAlmostEqual(float(torch.rad2deg(heading)), 0.0, delta=0.05)
 
     def test_equal_peaks_across_zero_stay_local(self):
         angles = rotation_steps_rad(10)
