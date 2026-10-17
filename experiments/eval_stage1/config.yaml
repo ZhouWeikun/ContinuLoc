@@ -1,0 +1,18 @@
+name: mean_north_heading
+checkpoint: gen_fm_exps/ckpts/stage1_visloc_segmentT8V05_softtriplet_1/epoch010.pth
+output_root: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/res_ckpts_stage1
+scenes: [] # Empty: all scenes from checkpoint opts.yaml.
+evaluation:
+  retrieval_mode: north_aligned # north_aligned | query_rotation_search
+  query_rotation_step_deg: 10 # query_rotation_search only; must divide 360
+  val_gallery_scale_mode: scene_mean # scene_mean | multiscale; rotation search requires scene_mean
+  val_gallery_scale_levels: 3 # multiscale only, >= 2
+  val_gallery_scale_spacing: linear # linear | log, bin centers in scene scale bounds
+  val_query_rot2uniform: true # north_aligned: use recorded heading to align query north
+  val_query_scale2uniform: false # north_aligned: normalize query to scene mean scale
+  val_overlap: 0.5
+  val_chunk_size: 32
+  batchsize_uav: 32
+  num_worker_eval: 4
+  satmaps_on_cpu: true
+  gpu_ids: '0'
