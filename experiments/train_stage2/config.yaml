@@ -1,0 +1,37 @@
+# Fill load_stage1_ckpt (.pth) and inherit_stage1_yaml (opts.yaml), or pass them on the command line.
+exp_setting:
+  dir2save_log: gen_fm_exps/logs
+  dir2save_ckpt: gen_fm_exps/ckpts
+  exp_name: stage2_visloc
+  save_freq: 10
+  tensorboard: true
+  val: true
+  val_freq: 10
+  load_stage1_ckpt: ''
+  inherit_stage1_yaml: ''
+  inherit_stage1_scope: network,data
+  load2train: ''
+  load2test: ''
+scenes_setting:
+  dataset_name: visloc
+  dataset_manifest: /home/data/zwk/dataset_UAV-VisLoc/dataset_manifest.json
+  selected_scene_name: '03'
+  sampling_strategy: weighted
+hardware_setting:
+  autocast: false
+  batchsize_sat: 512
+  batchsize_uav: 64
+  batchsize_uav_test: 128
+  gpu_ids: '0'
+  num_worker: 8
+  satmaps_on_cpu: true
+learning_setting:
+  num_epochs: 1000
+network_setting:
+  p_grid_config_yaml: configs/nerf_hash_visloc.yaml
+  posenc_multires_rc: 8
+  posenc_multires_rot: 6
+  posenc_multires_scale: 4
+  grid_mlp_hidden_dim: 1024
+  grid_mlp_num_blocks: 2
+  grid_mlp_use_coord_condition: true

@@ -1,0 +1,149 @@
+# 启动：python experiments/eval_stage1/run_batch.py
+# 预览：python experiments/eval_stage1/run_batch.py --dry-run
+# 默认基础配置：同目录 config.yaml，可用 --base-yaml 指定其他基础配置。
+# 每组独立继承基础配置；删除某个 overrides 参数表示继承，不表示关闭该功能。
+# name 必须唯一；enabled: false 跳过整组。按列表顺序执行，失败即停止。
+# overrides 中 evaluation 参数可直接写简名，也可写 evaluation.<参数名>。
+# checkpoint/output_root 的相对路径以仓库根目录为基准。
+# 每组结果目录名包含训练实验名、checkpoint、这里的 name 和时间戳，
+# eval.log 与 metrics.json 等均保存在该组结果目录内。
+experiments:
+  # 基线：场景均值尺度建库，使用记录的 query 朝向将图像转向北。
+  - name: stage1_vislocS9_segmentT8V05_softtripletAlpha10_4dof_rotXyArgmaxN36_ep24
+    enabled: false
+    overrides:
+      # 模型结构、数据划分及场景元数据从 checkpoint 同目录的 opts.yaml 继承。
+      checkpoint: gen_fm_exps/ckpts/stage1_vislocS9_segmentT80V5_softtripletAlpha10_4dof/epoch024.pth
+      output_root: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/res_ckpts_stage1
+      export_retrieval: true # 保存 Top-K 检索 bundle，供 refine_after_retrieval 使用。
+      scenes: [] # [] 使用 checkpoint 的全部场景；指定时填写 opts.yaml 中的准确场景名。
+
+      # xy:
+      val_overlap: 0.5 # 建库裁剪重叠率；增大通常会增加候选数量和计算量。
+
+      # scale:
+      val_query_scale2uniform: false # true 使用 query 尺度信息归一到场景均值；false 不做该归一。
+      val_gallery_scale_mode: single
+      val_gallery_single_scale_level: scene_mean # single 时生效，目前仅支持 scene_mean。
+      val_gallery_multi_scale_levels: 3 # 仅 multiscale 生效，>= 2；在上下限内取分箱中心。
+      val_gallery_multi_scale_spacing: linear # 仅 multiscale 生效：linear 等距 / log 对数间隔。
+
+      # rotation:
+      val_query_rot2uniform: false # true 使用记录朝向对齐北；false 不使用记录朝向，生成多角度旋转候选。
+      # 以下搜索参数仅在 val_query_rot2uniform=false 时生效；true 时完全忽略。
+      query_rotation_step_deg: 10 # 必须整除 360；10 度产生 36 个角度候选。
+      rot_retrieval_mode: rot_xy_argmax # rot_weighting | rot_argmax | rot_xy_argmax
+      # rot_weighting: 聚合方向响应选 xy，再加权估计方向。
+      # rot_argmax: 每个 xy 取最高相似度及其方向，再选 TopN xy。
+      # rot_xy_argmax: 展平 xy × 方向取 TopN；同一 xy 可由不同方向重复入选。
+      heading_temperature: 0.02 # 仅 rot_weighting 生效，必须 > 0；另两种模式忽略。
+
+      # 性能参数：CPU 读取批量与 GPU 前向批量独立。
+      max_forward_variants: 1024 # 每次网络前向最多处理的图像/变换候选数，也用于建库分块。
+      eval_cuda_memory_budget_gib: 22 # 启动器限制 PyTorch 分配器为 21 GiB，另留 1 GiB；超限报 OOM。
+      batchsize_uav: 32 # DataLoader 每批读取的原始 query 数，之后按前向上限重新组批。
+      num_worker_eval: 4 # 数据加载进程数；0 表示主进程读取。
+      satmaps_on_cpu: true # 卫星大图保留在 CPU，减少 GPU 常驻显存。
+      gpu_ids: '0' # GPU 编号保持字符串；本入口使用首个 GPU。
+
+  # 方向搜索：默认禁用；仍用相同 ckpt10，便于比较两种评估模式。
+  - name: stage1_vislocS9_segmentT8V05_softtripletAlpha10_4dof_rotArgmaxN36_ep24
+    enabled: false
+    overrides:
+      checkpoint: gen_fm_exps/ckpts/stage1_vislocS9_segmentT80V5_softtripletAlpha10_4dof/epoch024.pth
+      # 其他 checkpoint 示例（替换上一行即可）：
+      # checkpoint: gen_fm_exps/ckpts/stage1_vislocS9_segmentT80V5_softtripletAlpha10_4dof/epoch024.pth
+      output_root: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/res_ckpts_stage1
+      export_retrieval: true # 保存 Top-K 检索 bundle，供 refine_after_retrieval 使用。
+      scenes: [] # 使用 checkpoint 中的全部场景。
+
+      #xy
+      val_overlap: 0.5
+
+      #scale:
+      val_query_scale2uniform: false
+      val_gallery_scale_mode: single # 可改为 multiscale，与方向搜索组合。
+      val_gallery_single_scale_level: scene_mean # single 时生效，目前仅支持 scene_mean。
+      val_gallery_multi_scale_levels: 3 # multiscale 时生效，>= 2。
+      val_gallery_multi_scale_spacing: linear # multiscale 时生效：linear | log。
+
+      #rotation:
+      val_query_rot2uniform: false
+      query_rotation_step_deg: 10 # 360 / 10 = 36 个候选；角度越密，计算量越大。
+      rot_retrieval_mode: rot_argmax # rot_weighting | rot_argmax | rot_xy_argmax
+      # rot_weighting: 聚合方向响应选 xy，再加权估计方向。
+      # rot_argmax: 每个 xy 取最高相似度及其方向，再选 TopN xy。
+      # rot_xy_argmax: 展平 xy × 方向取 TopN；同一 xy 可由不同方向重复入选。
+      heading_temperature: 0.02 # 仅 rot_weighting 生效，必须 > 0；另两种模式忽略。
+
+      # 1024 上限、36 个角度时，每批处理 28 个 query，即 1008 个候选。
+      max_forward_variants: 1024
+      eval_cuda_memory_budget_gib: 22 # 分配器上限 21 GiB；不是整张 GPU 的绝对显存上限。
+      batchsize_uav: 32
+      num_worker_eval: 4
+      satmaps_on_cpu: true
+      gpu_ids: '0'
+
+  - name: stage1_vislocS9_segmentT8V05_softtripletAlpha10_4dof_rotWeightingN36_ep24
+    enabled: false
+    overrides:
+      checkpoint: gen_fm_exps/ckpts/stage1_vislocS9_segmentT80V5_softtripletAlpha10_4dof/epoch024.pth
+      # 其他 checkpoint 示例（替换上一行即可）：
+      # checkpoint: gen_fm_exps/ckpts/stage1_vislocS9_segmentT80V5_softtripletAlpha10_4dof/epoch024.pth
+      output_root: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/res_ckpts_stage1
+      export_retrieval: true # 保存 Top-K 检索 bundle，供 refine_after_retrieval 使用。
+      scenes: [] # 使用 checkpoint 中的全部场景。
+
+      #xy
+      val_overlap: 0.5
+
+      #scale:
+      val_query_scale2uniform: false
+      val_gallery_scale_mode: single # 可改为 multiscale，与方向搜索组合。
+      val_gallery_single_scale_level: scene_mean # single 时生效，目前仅支持 scene_mean。
+      val_gallery_multi_scale_levels: 3 # multiscale 时生效，>= 2。
+      val_gallery_multi_scale_spacing: linear # multiscale 时生效：linear | log。
+
+      #rotation:
+      val_query_rot2uniform: false
+      query_rotation_step_deg: 10 # 360 / 10 = 36 个候选；角度越密，计算量越大。
+      rot_retrieval_mode: rot_weighting # rot_weighting | rot_argmax | rot_xy_argmax
+      # rot_weighting: 聚合方向响应选 xy，再加权估计方向。
+      # rot_argmax: 每个 xy 取最高相似度及其方向，再选 TopN xy。
+      # rot_xy_argmax: 展平 xy × 方向取 TopN；同一 xy 可由不同方向重复入选。
+      heading_temperature: 0.02 # 仅 rot_weighting 生效，必须 > 0；另两种模式忽略。
+
+      # 1024 上限、36 个角度时，每批处理 28 个 query，即 1008 个候选。
+      max_forward_variants: 1024
+      eval_cuda_memory_budget_gib: 22 # 分配器上限 21 GiB；不是整张 GPU 的绝对显存上限。
+      batchsize_uav: 32
+      num_worker_eval: 4
+      satmaps_on_cpu: true
+      gpu_ids: '0'
+
+  # Wingtra：继承 checkpoint 的 segment 80%/5%/15% 划分；导出 val/test 检索结果供 refine。
+  - name: stage1_wingtraS2_segmentT80V5_softtripletAlpha20_4dof_rotWeightingN36_ep23
+    enabled: true
+    overrides:
+      checkpoint: gen_fm_exps/ckpts/stage1_wingtraS2_segmentT80V5_softtripletAlpha20_4dof/epoch023_zurichR1=87_zuchwilR1=83.pth
+      output_root: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/res_ckpts_stage1
+      export_retrieval: true
+      scenes:
+      - zurich
+      - zuchwil
+      val_overlap: 0.5
+      val_query_scale2uniform: false
+      val_gallery_scale_mode: single
+      val_gallery_single_scale_level: scene_mean
+      val_gallery_multi_scale_levels: 3
+      val_gallery_multi_scale_spacing: linear
+      val_query_rot2uniform: false
+      query_rotation_step_deg: 10
+      rot_retrieval_mode: rot_weighting
+      heading_temperature: 0.02
+      max_forward_variants: 1024
+      eval_cuda_memory_budget_gib: 22
+      batchsize_uav: 32
+      num_worker_eval: 4
+      satmaps_on_cpu: true
+      gpu_ids: '0'

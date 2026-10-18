@@ -1,0 +1,196 @@
+# enabled: false 可禁用整组；未填写参数继承基础 YAML。
+# name 对应 exp_name；场景编号使用字符串。
+# 本文件包含 VisLoc 和 Wingtra 独立实验；base_yaml 相对项目根目录。
+# 未指定 base_yaml 的实验使用 run_batch.py 的 --base-yaml。
+experiments:
+  - name: stage1_vislocS9_segmentT80V5_softtripletAlpha10_4dof
+    enabled: false
+    overrides:
+      dir2save_log: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/logs
+      dir2save_ckpt: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts
+      selected_scene_names: ["01", "02", "03", "04", "05", "06", "08", "09", "11"]
+      # 数据划分：generated 按当前比例生成划分，忽略 CSV 中历史 split 列。
+      split_source: generated
+      split_mode: segment # segment / interval / random
+      split_train_ratio: 0.8
+      split_val_ratio: 0.05 # 测试集比例 = 1 - train - val，此处为 0.15
+      # 正样本配对：full_4d 为位置、方向、尺度对齐；xy_only 为二维位置对照。
+      pair_alignment_mode: full_4d # full_4d / xy_only
+      n_global_negatives_per_batch: 384
+      reject_sampling: false
+      # loss:
+      loss_type: triplet_single_edge
+      triplet_gate: softplus
+      triplet_enable_row_filter: false
+      triplet_learnable_alpha: false
+      triplet_alpha: 10.0
+
+  - name: stage1_vislocS9_segmentT80V5_softtripletAlpha20_2dof
+    enabled: false
+    overrides:
+      dir2save_log: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/logs
+      dir2save_ckpt: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts
+      selected_scene_names: ["01", "02", "03", "04", "05", "06", "08", "09", "11"]
+      # 数据划分：generated 按当前比例生成划分，忽略 CSV 中历史 split 列。
+      split_source: generated
+      split_mode: segment # segment / interval / random
+      split_train_ratio: 0.8
+      split_val_ratio: 0.05 # 测试集比例 = 1 - train - val，此处为 0.15
+      # 正样本配对：full_4d 为位置、方向、尺度对齐；xy_only 为二维位置对照。
+      pair_alignment_mode: xy_only # full_4d / xy_only
+      n_global_negatives_per_batch: 384
+      reject_sampling: false
+      # loss:
+      loss_type: triplet_single_edge
+      triplet_gate: softplus
+      triplet_enable_row_filter: false
+      triplet_learnable_alpha: false
+      triplet_alpha: 20.0
+
+  # - name: stage1_vislocS9_segmentT80V5_infonceTau005_4dof
+  #   enabled: false
+  #   overrides:
+  #     dir2save_log: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/logs
+  #     dir2save_ckpt: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts
+  #     selected_scene_names: ["01", "02", "03", "04", "05", "06", "08", "09", "11"]
+  #     # 数据划分：generated 按当前比例生成划分，忽略 CSV 中历史 split 列。
+  #     split_source: generated
+  #     split_mode: segment # segment / interval / random
+  #     split_train_ratio: 0.8
+  #     split_val_ratio: 0.05 # 测试集比例 = 1 - train - val，此处为 0.15
+  #     # 正样本配对：full_4d 为位置、方向、尺度对齐；xy_only 为二维位置对照。
+  #     pair_alignment_mode: full_4d # full_4d / xy_only
+  #     n_global_negatives_per_batch: 384
+  #     reject_sampling: false
+  #     # loss:
+  #     loss_type: infonce
+  #     infonce_temperature: 0.05
+  #     infonce_learnable_temperature: false
+
+
+# Wingtra：Zurich + Zuchwil；各实验独立训练，共享同一批量列表。
+# generated 保留 aff2d_corrected 质量过滤，忽略历史 split 列及其空行。
+# 划分对照：segment 80%/5%/15% 或 interval 90%/0%/10%；均为 50 epochs。
+  - name: stage1_wingtraS2_segmentT80V5_softtripletAlpha10_4dof
+    base_yaml: configs/stage1_visual_encoder_wingtra.yaml
+    enabled: true
+    overrides:
+      split_source: generated
+      split_mode: segment
+      split_train_ratio: 0.8
+      split_val_ratio: 0.05
+      pair_alignment_mode: full_4d
+      n_global_negatives_per_batch: 384
+      reject_sampling: false
+      loss_type: triplet_single_edge
+      triplet_gate: softplus
+      triplet_enable_row_filter: false
+      triplet_learnable_alpha: false
+      triplet_alpha: 10.0
+      num_epochs: 50
+      load2test: ''
+      dir2save_log: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/logs
+      dir2save_ckpt: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts
+
+  - name: stage1_wingtraS2_intervalT90V0_softtripletAlpha10_4dof
+    base_yaml: configs/stage1_visual_encoder_wingtra.yaml
+    enabled: true
+    overrides:
+      split_source: generated
+      split_mode: interval
+      split_train_ratio: 0.9
+      split_val_ratio: 0.0
+      pair_alignment_mode: full_4d
+      n_global_negatives_per_batch: 384
+      reject_sampling: false
+      loss_type: triplet_single_edge
+      triplet_gate: softplus
+      triplet_enable_row_filter: false
+      triplet_learnable_alpha: false
+      triplet_alpha: 10.0
+      num_epochs: 50
+      load2test: ''
+      dir2save_log: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/logs
+      dir2save_ckpt: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts
+
+  - name: stage1_wingtraS2_segmentT80V5_softtripletAlpha20_4dof
+    base_yaml: configs/stage1_visual_encoder_wingtra.yaml
+    enabled: true
+    overrides:
+      split_source: generated
+      split_mode: segment
+      split_train_ratio: 0.8
+      split_val_ratio: 0.05
+      pair_alignment_mode: full_4d
+      n_global_negatives_per_batch: 384
+      reject_sampling: false
+      loss_type: triplet_single_edge
+      triplet_gate: softplus
+      triplet_enable_row_filter: false
+      triplet_learnable_alpha: false
+      triplet_alpha: 20.0
+      num_epochs: 50
+      load2test: ''
+      dir2save_log: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/logs
+      dir2save_ckpt: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts
+
+  - name: stage1_wingtraS2_intervalT90V0_softtripletAlpha20_4dof
+    base_yaml: configs/stage1_visual_encoder_wingtra.yaml
+    enabled: true
+    overrides:
+      split_source: generated
+      split_mode: interval
+      split_train_ratio: 0.9
+      split_val_ratio: 0.0
+      pair_alignment_mode: full_4d
+      n_global_negatives_per_batch: 384
+      reject_sampling: false
+      loss_type: triplet_single_edge
+      triplet_gate: softplus
+      triplet_enable_row_filter: false
+      triplet_learnable_alpha: false
+      triplet_alpha: 20.0
+      num_epochs: 50
+      load2test: ''
+      dir2save_log: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/logs
+      dir2save_ckpt: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts
+
+  - name: stage1_wingtraS2_segmentT80V5_softtripletAlpha20_2dof
+    base_yaml: configs/stage1_visual_encoder_wingtra.yaml
+    enabled: true
+    overrides:
+      split_source: generated
+      split_mode: segment
+      split_train_ratio: 0.8
+      split_val_ratio: 0.05
+      pair_alignment_mode: xy_only
+      n_global_negatives_per_batch: 384
+      reject_sampling: false
+      loss_type: triplet_single_edge
+      triplet_gate: softplus
+      triplet_enable_row_filter: false
+      triplet_learnable_alpha: false
+      triplet_alpha: 20.0
+      num_epochs: 50
+      load2test: ''
+      dir2save_log: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/logs
+      dir2save_ckpt: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts
+
+  # - name: stage1_wingtraS2_segmentT80V5_infonceTau005_4dof
+  #   base_yaml: configs/stage1_visual_encoder_wingtra.yaml
+  #   enabled: false
+  #   overrides:
+  #     split_source: generated
+  #     split_mode: segment
+  #     split_train_ratio: 0.8
+  #     split_val_ratio: 0.05
+  #     pair_alignment_mode: full_4d
+  #     n_global_negatives_per_batch: 384
+  #     reject_sampling: false
+  #     loss_type: infonce
+  #     infonce_temperature: 0.05
+  #     infonce_learnable_temperature: false
+  #     num_epochs: 50
+  #     load2test: ''
+  #     dir2save_log: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/logs
+  #     dir2save_ckpt: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts

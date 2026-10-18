@@ -1,0 +1,21 @@
+# 填写 Stage 2 checkpoint 和对应 opts.yaml 后启用；相对路径均以项目根目录为准。
+# selected_scene_name 可省略/留空，自动继承 Stage 2 的单场景。
+experiments:
+  - name: stage3_visloc03
+    enabled: false
+    overrides:
+      selected_scene_name: visloc_03
+      load_stage2_ckpt: ''
+      inherit_stage2_yaml: ''
+      stage3_recall_cfg: per_scene
+      hds_eval_n_samples: null
+
+  - name: stage3_zurich
+    enabled: true
+    base_yaml: experiments/inference_stage3/config.yaml
+    overrides:
+      selected_scene_name: zurich
+      load_stage2_ckpt: '/home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage2_wingtra_intervalT00V0_softtripletAlpha10_zurich/epoch999.pth'
+      inherit_stage2_yaml: '/home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage2_wingtra_intervalT00V0_softtripletAlpha10_zurich/opts.yaml'
+      stage3_recall_cfg: per_scene
+      hds_eval_n_samples: null

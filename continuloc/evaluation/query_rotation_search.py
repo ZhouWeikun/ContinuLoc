@@ -1,9 +1,9 @@
-"""Discrete query-rotation retrieval at one scene-mean scale.
+"""Discrete query-rotation retrieval with independently configured scales.
 
-The gallery stays north-aligned. Each query is scaled to the scene mean and
-encoded at equally spaced rotations. Each angle contributes
+The gallery stays north-aligned, with one or multiple scales. Each query is
+optionally scale-normalized and encoded at equally spaced rotations. Each angle contributes
 ``exp(-distance / temperature)`` with the same temperature used for heading.
-Location score is the sum of those 36 responses. Heading at the winning
+Each gallery candidate score is the sum of its angle responses. Heading at the winning
 location is their softmax, averaged as a local deviation from the peak angle,
 then returned in the same convention as ``rotdeg_fm_north_anticlock``.
 """
@@ -13,33 +13,7 @@ import numpy as np
 import torch
 
 
-_IMPLEMENTED_RETRIEVAL_MODES = ("north_aligned", "query_rotation_search")
-_RESERVED_RETRIEVAL_MODES = {
-    "reference_rotation_search": (
-        "reference_rotation_search is reserved: rotating satellite crops is not implemented"
-    ),
-}
 
-
-def resolve_retrieval_mode(mode):
-    if mode is None or str(mode).strip() == "":
-        return "north_aligned"
-    name = str(mode).strip().lower()
-    if name in _RESERVED_RETRIEVAL_MODES:
-        raise NotImplementedError(_RESERVED_RETRIEVAL_MODES[name])
-    if name not in _IMPLEMENTED_RETRIEVAL_MODES:
-        raise ValueError(f"Unknown retrieval_mode: {mode!r}")
-    return name
-
-
-def require_scene_mean_scale(gallery_scale_mode):
-    mode = "scene_mean" if gallery_scale_mode is None else str(gallery_scale_mode).strip().lower()
-    if mode != "scene_mean":
-        raise ValueError(
-            "query_rotation_search uses each scene's mean scale; "
-            f"val_gallery_scale_mode must be scene_mean, got {gallery_scale_mode!r}"
-        )
-    return mode
 
 
 def resolve_forward_variant_limit(max_forward_variants, val_chunk_size=1024):
@@ -173,7 +147,14 @@ def exponential_location_scores(responses, temperature=0.02):
     return torch.logsumexp(-distance / temperature, dim=1)
 
 
-def rotation_search_ranking(responses, warp_angles_rad, top_k, temperature=0.02):
+def resolve_rot_retrieval_mode(mode):
+    if mode not in ('rot_weighting', 'rot_argmax', 'rot_xy_argmax'):
+        raise ValueError(f'Unknown rot_retrieval_mode: {mode!r}')
+    return mode
+
+
+def rotation_search_ranking(responses, warp_angles_rad, top_k, temperature=0.02,
+                            mode='rot_weighting', return_all_headings=False):
     """Rank gallery locations by the summed exponential angle responses.
 
     ``responses`` is ``[B, A, G]``. A small distance at any angle raises that
@@ -181,16 +162,34 @@ def rotation_search_ranking(responses, warp_angles_rad, top_k, temperature=0.02)
     """
     if responses.ndim != 3:
         raise ValueError(f"responses must have shape [B, A, G], got {tuple(responses.shape)}")
-    scores = exponential_location_scores(responses, temperature)
+    mode = resolve_rot_retrieval_mode(mode)
+    angles = torch.as_tensor(warp_angles_rad, device=responses.device, dtype=responses.dtype).reshape(-1)
+    if angles.numel() != responses.shape[1]:
+        raise ValueError('Angle grid does not match responses')
+    if mode == 'rot_weighting':
+        scores = exponential_location_scores(responses, temperature)
+    elif mode == 'rot_argmax':
+        scores, best_angles = responses.max(dim=1)
+    else:
+        scores = responses.flatten(1)  # angle-major [A, G]; repeated xy is intentional.
     k = min(int(top_k), scores.shape[-1])
     if k < 1:
         raise ValueError("top_k must be positive")
     indices = torch.topk(scores, k=k, dim=-1, largest=True).indices
-    chosen = responses.gather(
-        2, indices[:, :1].unsqueeze(1).expand(-1, responses.shape[1], 1)
-    ).squeeze(-1)
-    heading = exponential_heading_from_responses(chosen, warp_angles_rad, temperature)
-    return indices, heading
+    if mode == 'rot_weighting':
+        chosen = responses.gather(2, indices.unsqueeze(1).expand(-1, responses.shape[1], -1))
+        heading = exponential_heading_from_responses(
+            chosen.transpose(1, 2).reshape(-1, responses.shape[1]), angles, temperature,
+        ).reshape(indices.shape)
+    else:
+        if mode == 'rot_xy_argmax':
+            angle_indices = indices // responses.shape[2]
+            indices = indices % responses.shape[2]
+        else:
+            angle_indices = best_angles.gather(1, indices)
+        warp = angles[angle_indices]
+        heading = torch.atan2(torch.sin(-warp), torch.cos(-warp))
+    return indices, heading if return_all_headings else heading[:, 0]
 
 
 def summarize_heading_errors(labels, errors_rad):

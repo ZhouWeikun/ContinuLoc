@@ -1,20 +1,29 @@
 name: mean_north_heading
 checkpoint: gen_fm_exps/ckpts/stage1_visloc_segmentT8V05_softtriplet_1/epoch010.pth
 output_root: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/res_ckpts_stage1
+export_retrieval: false # true: save per-scene val/test bundles for refine_after_retrieval
 scenes: [] # Empty: all scenes from checkpoint opts.yaml.
 evaluation:
-  retrieval_mode: north_aligned # north_aligned | query_rotation_search
-  query_rotation_step_deg: 10 # query_rotation_search only; must divide 360
-  heading_temperature: 0.02 # softmax temperature on feature distance; smaller stays nearer the peak
-  val_gallery_scale_mode: scene_mean # scene_mean | multiscale; rotation search requires scene_mean
-  val_gallery_scale_levels: 3 # multiscale only, >= 2
-  val_gallery_scale_spacing: linear # linear | log, bin centers in scene scale bounds
-  val_query_rot2uniform: true # north_aligned: use recorded heading to align query north
-  val_query_scale2uniform: false # north_aligned: normalize query to scene mean scale
+  # xy:
   val_overlap: 0.5
-  max_forward_variants: 512 # images per network forward
-  val_chunk_size: 32 # used only when max_forward_variants is omitted
-  batchsize_uav: 32
+
+  # scale:
+  val_query_scale2uniform: false # normalize query to scene mean scale
+  val_gallery_scale_mode: single # single | multiscale
+  val_gallery_single_scale_level: scene_mean # single only; currently supports scene_mean
+  val_gallery_multi_scale_levels: 3 # multiscale only, >= 2
+  val_gallery_multi_scale_spacing: linear # linear | log, bin centers in scene scale bounds
+
+  # rotation:
+  val_query_rot2uniform: true # use recorded heading to align query north
+  query_rotation_step_deg: 10 # only when val_query_rot2uniform=false; must divide 360
+  rot_retrieval_mode: rot_weighting # rot_weighting | rot_argmax | rot_xy_argmax
+  heading_temperature: 0.02 # 仅 rot_weighting 生效，必须 > 0；影响位置聚合与方向估计。
+
+  # performance:
+  max_forward_variants: 1024 # RTX 4090: measured below 22 GiB including allocator cache
+  eval_cuda_memory_budget_gib: 22 # launcher caps allocator at 21 GiB, reserves 1 GiB for CUDA
+  batchsize_uav: 32 # CPU DataLoader batch; independent of GPU forward size
   num_worker_eval: 4
   satmaps_on_cpu: true
   gpu_ids: '0'

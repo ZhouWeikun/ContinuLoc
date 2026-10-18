@@ -151,3 +151,12 @@ train_map_multimlp/
 scripts/tmp_run_yamls/
 gen_fm_exps/
 fine_vis4paper/
+
+# Temporary work and runtime artifacts
+/temp/
+/results/
+/ckpts/
+/logs/
+
+# Temporary research work (user-selected directory name)
+/tmep/

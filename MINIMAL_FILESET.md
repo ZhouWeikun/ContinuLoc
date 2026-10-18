@@ -6,31 +6,31 @@
 This branch keeps the smallest complete code path for the three-stage INGP
 pipeline. The anchor entrypoints are:
 
-- `trainers/stage1_visual_encoder_minimal.py`
-- `trainers/stage2_INGP_minimal.py`
-- `trainers/stage3_ingp_inferencer_minimal.py`
+- `experiments/train_stage1/run.py`
+- `scripts/train_stage2.py`
+- `scripts/localize_stage3.py`
 
 ## Commands
 
 Stage 1 train/test:
 
 ```bash
-python trainers/stage1_visual_encoder_minimal.py \
-  --p_yaml trainer_depends/configs/stage1_visual_encoder_wingtra.yaml
+python experiments/train_stage1/run.py \
+  --p_yaml configs/stage1_visual_encoder_wingtra.yaml
 ```
 
 Stage 2 train/test:
 
 ```bash
-python trainers/stage2_INGP_minimal.py \
-  --p_yaml trainer_depends/configs/stage2_INGP_wingtra.yaml
+python scripts/train_stage2.py \
+  --p_yaml configs/stage2_INGP_wingtra.yaml
 ```
 
 Stage 3 INGP inference:
 
 ```bash
-python trainers/stage3_ingp_inferencer_minimal.py \
-  --stage3_yaml trainer_depends/configs/stage3_ingp_minimal_wingtra.yaml \
+python scripts/localize_stage3.py \
+  --stage3_yaml configs/stage3_ingp_minimal.yaml \
   --stage2_opts_yaml <path-to-stage2-opts.yaml>
 ```
 

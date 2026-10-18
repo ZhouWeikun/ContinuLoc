@@ -16,10 +16,8 @@ from continuloc.evaluation.query_rotation_search import (
     exponential_location_scores,
     feature_chord_distance,
     normalized_base_grid,
-    require_scene_mean_scale,
     resolve_forward_variant_limit,
     resolve_heading_temperature,
-    resolve_retrieval_mode,
     rotation_scale_grid,
     rotation_search_ranking,
     rotation_steps_rad,
@@ -73,19 +71,7 @@ class RotationGridTest(unittest.TestCase):
             rotation_steps_rad(float("nan"))
 
 
-class RetrievalModeTest(unittest.TestCase):
-    def test_default_and_reserved_modes(self):
-        self.assertEqual(resolve_retrieval_mode(None), "north_aligned")
-        self.assertEqual(resolve_retrieval_mode("Query_Rotation_Search"), "query_rotation_search")
-        with self.assertRaises(NotImplementedError):
-            resolve_retrieval_mode("reference_rotation_search")
-        with self.assertRaises(ValueError):
-            resolve_retrieval_mode("scale_sweep")
 
-    def test_rotation_search_rejects_multiscale(self):
-        self.assertEqual(require_scene_mean_scale("scene_mean"), "scene_mean")
-        with self.assertRaises(ValueError):
-            require_scene_mean_scale("multiscale")
 
 
 class RotationSearchMathTest(unittest.TestCase):

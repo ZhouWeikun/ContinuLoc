@@ -24,10 +24,9 @@ from continuloc.evaluation.query_rotation_search import (
     absolute_heading_error_rad,
     attach_heading_errors,
     normalized_base_grid,
-    require_scene_mean_scale,
     resolve_forward_variant_limit,
     resolve_heading_temperature,
-    resolve_retrieval_mode,
+    resolve_rot_retrieval_mode,
     rotation_scale_grid,
     rotation_search_ranking,
     rotation_steps_rad,
@@ -349,17 +348,20 @@ class MinimalStage1VisualEncoderTrainer(BaseTrainer):
 
     def _build_scene_gallery(self, sat_dataset, overlap, chunk_size):
         gallery_scale = float(sat_dataset.satimgsize_scale_to_ref_m_mean)
-        mode = str(getattr(self.opt, "val_gallery_scale_mode", "scene_mean"))
-        if mode == "scene_mean":
+        mode = str(getattr(self.opt, "val_gallery_scale_mode", "single"))
+        if mode == "single":
+            level = getattr(self.opt, "val_gallery_single_scale_level", "scene_mean")
+            if level != "scene_mean":
+                raise ValueError("val_gallery_single_scale_level currently supports only scene_mean")
             scales = [gallery_scale]
             crop_sizes = [float(sat_dataset.satimgsize2crop_mean)]
         elif mode == "multiscale":
-            levels = int(getattr(self.opt, "val_gallery_scale_levels", 3))
+            levels = int(getattr(self.opt, "val_gallery_multi_scale_levels", 3))
             if levels < 2:
                 raise ValueError("multiscale requires at least two scale levels")
             scales, crop_sizes = sat_dataset.mk_sacle_levels(
                 n_level=levels,
-                scale_mode=getattr(self.opt, "val_gallery_scale_spacing", "linear"),
+                scale_mode=getattr(self.opt, "val_gallery_multi_scale_spacing", "linear"),
             )
         else:
             raise ValueError(f"Unknown val_gallery_scale_mode: {mode}")
@@ -405,7 +407,8 @@ class MinimalStage1VisualEncoderTrainer(BaseTrainer):
         n_queries = uavimgs.shape[0]
         n_angles = warp_angles.numel()
         n_gallery = feats_gallery.shape[0]
-        responses = torch.empty(n_queries, n_angles, n_gallery, dtype=torch.float32)
+        responses = torch.empty(n_queries, n_angles, n_gallery, dtype=torch.float32,
+                                device=uavimgs.device)
         if n_queries == 0 or n_angles == 0:
             return responses
         gallery = feats_gallery.to(device=uavimgs.device)
@@ -431,15 +434,39 @@ class MinimalStage1VisualEncoderTrainer(BaseTrainer):
                     base_grid,
                 )
                 feats_q = self._encode_imgs_eval(sampled)
-                similarity = (feats_q @ gallery.to(dtype=feats_q.dtype).transpose(0, 1)).detach().cpu()
-                responses[query_index.cpu(), angle_index.cpu()] = similarity
+                similarity = feats_q @ gallery.to(dtype=feats_q.dtype).transpose(0, 1)
+                responses.view(-1, n_gallery)[start:start + len(flat_index)] = similarity
+                del sampled, feats_q, similarity
         return responses
+
+    @staticmethod
+    def _eval_query_batches(loader, target_size):
+        """Combine small worker-loaded batches without retaining a whole scene."""
+        def combine(parts):
+            output = torch.empty((sum(len(p) for p in parts), *parts[0].shape[1:]),
+                                 dtype=parts[0].dtype, pin_memory=parts[0].is_pinned())
+            return torch.cat(parts, out=output)
+
+        images, coords, count = [], [], 0
+        for batch in loader:
+            offset = 0
+            while offset < len(batch[0]):
+                take = min(target_size - count, len(batch[0]) - offset)
+                images.append(batch[0][offset:offset + take])
+                coords.append(batch[1][offset:offset + take])
+                count += take
+                offset += take
+                if count == target_size:
+                    yield combine(images), combine(coords)
+                    images, coords, count = [], [], 0
+        if count:
+            yield combine(images), combine(coords)
 
     def test(self, init_datasets=True, load_ckpt=True, restore_train=True):
         """Recall@K against a north-aligned satellite gallery.
 
-        ``north_aligned`` rotates each query with its recorded heading.
-        ``query_rotation_search`` scales queries to the scene mean. Location
+        Query heading alignment selects a single orientation; otherwise search
+        discrete rotations. Query scale normalization is independent. Location
         score sums ``exp(-distance / temperature)`` over the discrete query
         rotations. Heading at the winning location uses that same temperature.
         """
@@ -459,21 +486,20 @@ class MinimalStage1VisualEncoderTrainer(BaseTrainer):
             getattr(self.opt, "val_chunk_size", 1024),
         )
         k_values = [1, 5, 10, 20, 50]
-        retrieval_mode = resolve_retrieval_mode(getattr(self.opt, "retrieval_mode", "north_aligned"))
         query_rot2uniform = bool(getattr(self.opt, "val_query_rot2uniform", True))
         query_scale2uniform = bool(getattr(self.opt, "val_query_scale2uniform", False))
         warp_angles = None
-        if retrieval_mode == "query_rotation_search":
-            require_scene_mean_scale(getattr(self.opt, "val_gallery_scale_mode", "scene_mean"))
+        if not query_rot2uniform:
+            rot_mode = resolve_rot_retrieval_mode(getattr(self.opt, 'rot_retrieval_mode', 'rot_weighting'))
             step_deg = getattr(self.opt, "query_rotation_step_deg", 10.0)
             warp_angles = rotation_steps_rad(step_deg)
             heading_temperature = resolve_heading_temperature(
                 getattr(self.opt, "heading_temperature", None),
-            )
+            ) if rot_mode == 'rot_weighting' else None
             print(
                 f"Retrieval: query_rotation_search, step_deg={float(step_deg):g}, "
-                f"angles={warp_angles.numel()}, heading_temperature={heading_temperature:g}, "
-                f"location_score=sum(exp(-distance/temperature))",
+                f"angles={warp_angles.numel()}, rot_retrieval_mode={rot_mode}, "
+                f"heading_temperature={heading_temperature}",
                 flush=True,
             )
         results = {}
@@ -489,50 +515,71 @@ class MinimalStage1VisualEncoderTrainer(BaseTrainer):
             )
 
             use_variant_cap = getattr(self.opt, "max_forward_variants", None) not in (None, "")
-            if retrieval_mode == "query_rotation_search":
-                query_batch = max(len(uav_dataset), 1)
+            if not query_rot2uniform:
+                query_batch = max(1, forward_limit // warp_angles.numel())
             elif use_variant_cap:
                 query_batch = forward_limit
             else:
                 query_batch = int(self.opt.batchsize_uav)
             uav_loader = torch.utils.data.DataLoader(
                 uav_dataset,
-                batch_size=query_batch,
+                batch_size=int(self.opt.batchsize_uav),
                 num_workers=int(getattr(self.opt, "num_worker_eval", 0)),
                 shuffle=False,
                 drop_last=False,
-                pin_memory=False,
+                pin_memory=self.device.type == "cuda",
             )
 
             metrics = PartitionedRecall(uav_dataset.eval_split_labels, k_values)
             top_k = min(max(k_values), feats_gallery.shape[0])
+            if not query_rot2uniform and rot_mode == 'rot_xy_argmax':
+                top_k = min(max(k_values), feats_gallery.shape[0] * warp_angles.numel())
             heading_errors = []
-            for batch in tqdm.tqdm(uav_loader, desc=f"test {scene_name}"):
+            export_dir = getattr(self.opt, "retrieval_export_dir", None)
+            export_coords, export_gt = [], []
+            feats_gallery = feats_gallery.to(self.device)
+            batches = self._eval_query_batches(uav_loader, query_batch)
+            for batch in tqdm.tqdm(batches, total=(len(uav_dataset) + query_batch - 1) // query_batch,
+                                   desc=f"test {scene_name}"):
                 uavimgs, coords_uav = batch[0], batch[1]
-                uavimgs = uavimgs.to(self.device)
-                coords_uav = coords_uav.to(self.device)
+                uavimgs = uavimgs.to(self.device, non_blocking=True)
+                coords_uav = coords_uav.to(self.device, non_blocking=True)
 
-                if retrieval_mode == "query_rotation_search":
-                    scale_f = gallery_scale / coords_uav[:, 3].clamp(min=1e-6)
+                if not query_rot2uniform:
+                    scale_f = (gallery_scale / coords_uav[:, 3].clamp(min=1e-6)
+                               if query_scale2uniform else torch.ones_like(coords_uav[:, 3]))
                     responses = self._rotation_search_responses(
                         uavimgs, scale_f, warp_angles, feats_gallery, forward_limit,
                     )
                     indices, heading_hat = rotation_search_ranking(
-                        responses, warp_angles, top_k, heading_temperature,
+                        responses, warp_angles, top_k, heading_temperature, mode=rot_mode,
+                        return_all_headings=bool(export_dir),
                     )
-                    heading_errors.append(absolute_heading_error_rad(heading_hat, coords_uav[:, 2].cpu()))
+                    heading_errors.append(absolute_heading_error_rad(
+                        heading_hat[:, 0] if export_dir else heading_hat, coords_uav[:, 2],
+                    ).cpu())
+                    del responses
                 else:
                     rot_align = -coords_uav[:, 2] if query_rot2uniform else None
-                    scale_f = gallery_scale / coords_uav[:, 3].clamp(min=1e-6) if query_scale2uniform else None
+                    scale_f = (gallery_scale / coords_uav[:, 3].clamp(min=1e-6)
+                               if query_scale2uniform else torch.ones_like(coords_uav[:, 3])) if query_scale2uniform else None
                     if query_rot2uniform or query_scale2uniform:
                         uavimgs = self._warp_uav_imgs(uavimgs, rot_rad=rot_align, scale_f=scale_f)
 
                     with torch.no_grad():
-                        feats_q = self._encode_imgs_eval(uavimgs).cpu()
+                        feats_q = self._encode_imgs_eval(uavimgs)
 
                     dist_feat = torch.cdist(feats_q, feats_gallery)
                     indices = torch.topk(dist_feat, k=top_k, dim=1, largest=False).indices
+                    del feats_q, dist_feat
+                indices = indices.cpu()
                 coords_topk = coords_gallery[indices]
+                if export_dir:
+                    candidates = coords_topk.clone()
+                    candidates[:, :, 2] = (coords_uav[:, 2].cpu()[:, None] if query_rot2uniform
+                                           else heading_hat.detach().cpu())
+                    export_coords.append(candidates.cpu())
+                    export_gt.append(coords_uav.detach().cpu())
                 dist_nrc = torch.norm(coords_uav[:, None, :2].cpu() - coords_topk[:, :, :2], p=2, dim=-1)
                 hits = dist_nrc < float(sat_dataset.halfimg_radius_nrc)
 
@@ -554,6 +601,36 @@ class MinimalStage1VisualEncoderTrainer(BaseTrainer):
                     print(text)
                     if self.logger is not None:
                         self.logger.info(text)
+            if export_dir:
+                from pathlib import Path
+                import numpy as np
+                output = Path(export_dir)
+                output.mkdir(parents=True, exist_ok=True)
+                all_coords, all_gt = torch.cat(export_coords), torch.cat(export_gt)
+                labels = np.asarray(uav_dataset.eval_split_labels)
+                query_paths = uav_dataset.uavimg_paths_eval
+                for split_name in ("val", "test"):
+                    selected = np.flatnonzero(labels == split_name)
+                    if not len(selected):
+                        continue
+                    bundle_dir = output / (str(scene_name).replace("/", "_") + "__" + split_name)
+                    bundle_dir.mkdir(parents=True, exist_ok=False)
+                    torch.save({
+                        "coords_topk": all_coords[selected], "coords_gt": all_gt[selected],
+                        "report": {"scene_name": scene_name, "split": split_name,
+                                   "thresholds": {"norm_dist": float(sat_dataset.halfimg_radius_nrc),
+                                                  "nrc2meter": nrc2meter,
+                                                  "rot": None, "scale_ratio": None},
+                                   "k_values": k_values},
+                        "config": {
+                            "stage1_ckpt": str(getattr(self.opt, "load2test", "")),
+                            "opts_yaml": str(getattr(self.opt, "retrieval_export_opts_yaml", "")),
+                            "query_paths": [str(Path(query_paths[int(i)]).resolve()) for i in selected],
+                            "query_rot2uniform": query_rot2uniform,
+                            "query_scale2uniform": query_scale2uniform,
+                            "retrieval_eval_cfg": {},
+                        },
+                    }, bundle_dir / "retrieval_bundle.pt")
             results[scene_name] = scene_result
 
         if restore_train:
@@ -563,5 +640,3 @@ class MinimalStage1VisualEncoderTrainer(BaseTrainer):
 
 
 VisualEncoderTrainer = MinimalStage1VisualEncoderTrainer
-
-
