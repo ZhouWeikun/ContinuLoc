@@ -22,6 +22,11 @@ inference_setting:
   hds_stage1_overlap: 0.0
   hds_stage1_n_rot: 36
   hds_stage1_n_scale: 4
+  hds_stage1_scale_spacing: linear
+  hds_stage1_gallery_feature_source: ingp
+  hds_stage1_visual_gallery_batch_size: 128
+  hds_stage1_visual_score_mode: raw_score
+  hds_stage1_visual_softmax_temperature: 0.02
   hds_stage1_top_ratio_rho0: 0.1
   hds_stage1_max_anchors_k0: 1024
 
@@ -43,3 +48,4 @@ inference_setting:
   hds_score_chunk_size: 32768 #8192*4
   hds_eval_n_samples: null #None=test all queries
   hds_scale_select_mode: log_expectation
+  hds_scale_select_scope: per_anchor

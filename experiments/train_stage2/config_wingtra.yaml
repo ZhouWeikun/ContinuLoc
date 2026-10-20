@@ -3,7 +3,7 @@ exp_setting:
   dir2save_log: gen_fm_exps/logs
   dir2save_ckpt: gen_fm_exps/ckpts
   exp_name: stage2_wingtra
-  save_freq: 10
+  save_freq: 100
   tensorboard: true
   val: true
   val_freq: 10
@@ -29,6 +29,12 @@ scenes_setting:
       p_uavinfo_json: /home/data/zwk/data_uavimgs_wingtra/Zuchwil/uavimgs_info/uavimgs_metainfo.json
       p_uav_geocsv: /home/data/zwk/data_uavimgs_wingtra/Zuchwil/uavimgs_info/uavimgs_geo_corrected_gim_dkm_v1.csv
       weight: 1.0
+data_setting:
+  # Stage 2 sat尺度默认复现历史行为：按有效UAV尺度经验分布采样，再加完整跨度±5%的扰动。
+  # 可选采样方式: empirical / uniform_linear / uniform_log。
+  sat_scale_sampling_mode: empirical
+  sat_scale_jitter_enabled: true
+  sat_scale_jitter_half_span_ratio: 0.05
 hardware_setting:
   autocast: false
   batchsize_sat: 512

@@ -32,6 +32,11 @@ scenes_setting:
   # 支持编号 "03" 或完整名称 visloc_03；命令行可覆盖。
   selected_scene_name: "03"
   sampling_strategy: weighted
+data_setting:
+  # empirical复现旧采样；也可选uniform_linear或uniform_log。
+  sat_scale_sampling_mode: empirical
+  sat_scale_jitter_enabled: true
+  sat_scale_jitter_half_span_ratio: 0.05
 
 hardware_setting:
   autocast: False
@@ -54,4 +59,3 @@ network_setting:
   grid_mlp_hidden_dim: 1024 #org=512
   grid_mlp_num_blocks: 2
   grid_mlp_use_coord_condition: true
-

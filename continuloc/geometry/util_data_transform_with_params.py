@@ -445,7 +445,7 @@ def apply_augment_to_coords(coords_4d, rotation_deg, scale_factor):
     注意：
         - 位置(nr, nc)不变，因为UAV的地理位置没有改变
         - 旋转角度需要加上增强的旋转：rot_new = rot_old + rot_augment
-        - 尺度需要乘以增强的尺度：scale_new = scale_old * scale_augment
+        - 图像放大后有效地面覆盖范围变小：scale_new = scale_old / scale_augment
     """
     coords_augmented = coords_4d.clone()
 

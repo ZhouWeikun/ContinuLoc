@@ -46,6 +46,17 @@ Stage 2 检查点仅保存可训练的场模块，因此续训、测试仍需要
   例如 `grid_mlp_hidden_dim` 或 `network_setting.grid_mlp_hidden_dim`。
 - 未知覆盖键、歧义键、重复名称和非布尔 `enabled` 会报错；实验名称只在 `name` 设置。
 
+Stage 2的卫星尺度采样由 `data_setting` 控制：
+
+- `sat_scale_sampling_mode`: `empirical`（UAV经验分布）、`uniform_linear`（raw scale均匀）或
+  `uniform_log`（log scale均匀）。
+- `sat_scale_jitter_enabled`: 是否在基础尺度上叠加随机扰动。
+- `sat_scale_jitter_half_span_ratio`: 扰动半径占完整尺度跨度的比例；`0.05`表示
+  `±5% * (scale_max - scale_min)`。关闭扰动时该数值不生效。
+
+这些字段可在 `stage2_batch_config.yaml` 的 `overrides` 中逐组覆盖。文件末尾保留了
+Zuchwil interval的 `uniform_log + no jitter` 对照配置，默认禁用，避免批量执行时误启动训练。
+
 列表包含 VisLoc 03、Wingtra Zurich、Wingtra Zuchwil 三组独立训练示例。
 先填写每组 `load_stage1_ckpt` 与对应的 `inherit_stage1_yaml`，不需要的组设为禁用。
 每组仍只训练一个场景；可复制条目来比较不同场景、教师检查点或 MLP 参数。

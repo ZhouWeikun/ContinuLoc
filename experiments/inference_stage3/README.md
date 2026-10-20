@@ -33,6 +33,20 @@ python experiments/inference_stage3/run.py --config /path/to/config.yaml
 ## 参数与指标
 
 - `hds_stage1_*`：粗搜索网格、旋转/尺度采样、候选比例与上限。
+- `hds_stage1_scale_spacing`：粗搜索尺度网格的离散间隔，支持 `linear` 或 `log`；
+  它与汇总离散尺度得分的 `hds_scale_select_mode` 是两个独立设置。
+- `hds_stage1_gallery_feature_source`：初始粗搜索 gallery 特征来源。`ingp` 查询 Stage 2
+  坐标特征场；`visual_encoder` 按同一组 4D 候选裁剪卫星图，并用 Stage 1 视觉模型编码。
+  该设置只改变粗搜索，种群收缩和 CMA 继续使用 INGP。
+- `hds_stage1_visual_gallery_batch_size`：制作 visual-encoder gallery 时的网络前向批大小。
+- `hds_stage1_visual_score_mode`：Visual Gallery 的相似度校准。`raw_score` 保留旧的
+  `(2-L2)/2` 映射；`cosine_softmax` 将 cosine similarity 除以
+  `hds_stage1_visual_softmax_temperature` 后，在每个固定 `(位置, rotation)` 锚点内沿
+  scale 维做 softmax；锚点原始总分保持不变。当前实验温度为 `0.02`。实际使用的 3D
+  seed 路径把每个 `(位置, rotation)` 当作独立锚点，不会先汇总36个 rotation。
+- `hds_scale_select_scope`：`per_anchor` 为每个 `(位置, rotation)` 锚点分别解析尺度；
+  `global_query` 先对位置和旋转边缘化，为一个 query 解析唯一尺度，再把它固定到所有
+  Population Contraction 和 CMA 轨迹。后者对应 scale-first 推理。
 - `hds_stage2_*`：种群收缩轮数、粒子数量、搜索半径、elite 与存活比例。
 - `hds_stage3_*`：CMA 模式数量、种群、迭代与提前停止参数。
 - `hds_score_chunk_size`：评分分块大小；不改变搜索阶段。

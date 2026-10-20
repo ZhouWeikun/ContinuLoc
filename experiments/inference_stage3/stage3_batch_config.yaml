@@ -1,21 +1,143 @@
-# 填写 Stage 2 checkpoint 和对应 opts.yaml 后启用；相对路径均以项目根目录为准。
-# selected_scene_name 可省略/留空，自动继承 Stage 2 的单场景。
+# 当前启用 Zurich/Zuchwil 的四组原始 Wingtra 配置（4 个尺度格、每轮 8 个粒子）。
+# 4尺度/m12 对照组保留在下方，默认不运行。
+# 每组场景、网络、数据划分和 Stage 1 权重均从对应 Stage 2 opts.yaml 追溯。
 experiments:
-  - name: stage3_visloc03
+  # - name: stage3_visloc03_segmentT80V0_softtripletAlpha10_ep999
+  #   enabled: false
+  #   overrides:
+  #     selected_scene_name: visloc_03
+  #     load_stage2_ckpt: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage2_visloc03_segmentT80V0_softtripletAlpha10/epoch999.pth
+  #     inherit_stage2_yaml: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage2_visloc03_segmentT80V0_softtripletAlpha10/opts.yaml
+  #     stage3_recall_cfg: per_scene
+  #     hds_eval_n_samples: null
+
+  # - name: stage3_visloc04_segmentT80V0_softtripletAlpha10_ep999
+  #   enabled: false
+  #   overrides:
+  #     selected_scene_name: visloc_04
+  #     load_stage2_ckpt: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage2_visloc04_segmentT80V0_softtripletAlpha10/epoch999.pth
+  #     inherit_stage2_yaml: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage2_visloc04_segmentT80V0_softtripletAlpha10/opts.yaml
+  #     stage3_recall_cfg: per_scene
+  #     hds_eval_n_samples: null
+
+  # - name: stage3_visloc03_intervalT80V0_softtripletAlpha10_ep999
+  #   enabled: false
+  #   overrides:
+  #     selected_scene_name: visloc_03
+  #     load_stage2_ckpt: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage2_visloc03_intervalT80V0_softtripletAlpha10/epoch999.pth
+  #     inherit_stage2_yaml: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage2_visloc03_intervalT80V0_softtripletAlpha10/opts.yaml
+  #     stage3_recall_cfg: per_scene
+  #     hds_eval_n_samples: null
+
+  # - name: stage3_visloc04_intervalT80V0_softtripletAlpha10_ep999
+  #   enabled: false
+  #   overrides:
+  #     selected_scene_name: visloc_04
+  #     load_stage2_ckpt: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage2_visloc04_intervalT80V0_softtripletAlpha10/epoch999.pth
+  #     inherit_stage2_yaml: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage2_visloc04_intervalT80V0_softtripletAlpha10/opts.yaml
+  #     stage3_recall_cfg: per_scene
+  #     hds_eval_n_samples: null
+
+  - name: stage3_wingtra_segmentT90V0_softtripletAlpha10_zurich_ep999
     enabled: false
     overrides:
-      selected_scene_name: visloc_03
-      load_stage2_ckpt: ''
-      inherit_stage2_yaml: ''
+      selected_scene_name: zurich
+      load_stage2_ckpt: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage2_wingtra_segmentT90V0_softtripletAlpha10_zurich/epoch999.pth
+      inherit_stage2_yaml: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage2_wingtra_segmentT90V0_softtripletAlpha10_zurich/opts.yaml
       stage3_recall_cfg: per_scene
+      hds_stage1_n_scale: 4
+      hds_stage2_particles_m: 8
       hds_eval_n_samples: null
 
-  - name: stage3_zurich
-    enabled: true
-    base_yaml: experiments/inference_stage3/config.yaml
+  - name: stage3_wingtra_intervalT90V0_softtripletAlpha10_zurich_ep999
+    enabled: false
     overrides:
       selected_scene_name: zurich
-      load_stage2_ckpt: '/home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage2_wingtra_intervalT00V0_softtripletAlpha10_zurich/epoch999.pth'
-      inherit_stage2_yaml: '/home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage2_wingtra_intervalT00V0_softtripletAlpha10_zurich/opts.yaml'
+      load_stage2_ckpt: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage2_wingtra_intervalT90V0_softtripletAlpha10_zurich/epoch999.pth
+      inherit_stage2_yaml: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage2_wingtra_intervalT90V0_softtripletAlpha10_zurich/opts.yaml
       stage3_recall_cfg: per_scene
+      hds_stage1_n_scale: 4
+      hds_stage2_particles_m: 8
+      hds_eval_n_samples: null
+
+  - name: stage3_wingtra_segmentT90V0_softtripletAlpha10_zuchwil_ep999
+    enabled: false
+    overrides:
+      selected_scene_name: zuchwil
+      load_stage2_ckpt: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage2_wingtra_segmentT90V0_softtripletAlpha10_zuchwil/epoch999.pth
+      inherit_stage2_yaml: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage2_wingtra_segmentT90V0_softtripletAlpha10_zuchwil/opts.yaml
+      stage3_recall_cfg: per_scene
+      hds_stage1_n_scale: 4
+      hds_stage2_particles_m: 8
+      hds_eval_n_samples: null
+
+  - name: stage3_wingtra_intervalT90V0_softtripletAlpha10_zuchwil_ep999_stage3OptScale
+    enabled: true
+    overrides:
+      selected_scene_name: zuchwil
+      load_stage2_ckpt: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage2_wingtra_intervalT90V0_softtripletAlpha10_zuchwil/epoch999.pth
+      inherit_stage2_yaml: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage2_wingtra_intervalT90V0_softtripletAlpha10_zuchwil/opts.yaml
+      stage3_recall_cfg: per_scene
+      hds_stage1_n_scale: 4
+      hds_stage2_particles_m: 8
+      hds_eval_n_samples: null
+
+  # 初始粗搜索改用Stage 1 visual encoder gallery；其余设置与4尺度/8粒子原始组一致。
+  - name: stage3_wingtra_intervalT90V0_softtripletAlpha10_zuchwil_ep999_visualGallery
+    enabled: false
+    overrides:
+      selected_scene_name: zuchwil
+      load_stage2_ckpt: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage2_wingtra_intervalT90V0_softtripletAlpha10_zuchwil/epoch999.pth
+      inherit_stage2_yaml: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage2_wingtra_intervalT90V0_softtripletAlpha10_zuchwil/opts.yaml
+      stage3_recall_cfg: per_scene
+      hds_stage1_gallery_feature_source: visual_encoder
+      hds_stage1_visual_gallery_batch_size: 62
+      hds_stage1_visual_score_mode: raw_score
+      hds_stage1_visual_softmax_temperature: 0.02
+      hds_stage1_n_scale: 4
+      hds_stage1_scale_spacing: log
+      hds_stage2_particles_m: 8
+      hds_stage3_optimize_scale: false
+      hds_eval_n_samples: null
+
+  # Visual Gallery 尺度校准消融：cosine logits / 0.02 温度；其他设置与上组一致。
+  - name: stage3_wingtra_intervalT90V0_softtripletAlpha10_zuchwil_ep999_visualGallery_cosineSoftmaxT002
+    enabled: false
+    overrides:
+      selected_scene_name: zuchwil
+      load_stage2_ckpt: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage2_wingtra_intervalT90V0_softtripletAlpha10_zuchwil/epoch999.pth
+      inherit_stage2_yaml: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage2_wingtra_intervalT90V0_softtripletAlpha10_zuchwil/opts.yaml
+      stage3_recall_cfg: per_scene
+      hds_stage1_gallery_feature_source: visual_encoder
+      hds_stage1_visual_gallery_batch_size: 62
+      hds_stage1_visual_score_mode: cosine_softmax
+      hds_stage1_visual_softmax_temperature: 0.02
+      hds_stage1_n_scale: 4
+      hds_stage1_scale_spacing: log
+      hds_scale_select_mode: log_expectation
+      hds_scale_select_scope: per_anchor
+      hds_stage2_particles_m: 8
+      hds_stage2_enable_scale_sampling: false
+      hds_stage3_optimize_scale: false
+      hds_eval_n_samples: null
+
+  # Query级scale-first：先由Visual Gallery确定唯一尺度，随后INGP只搜索xy/rotation。
+  - name: stage3_wingtra_intervalT90V0_softtripletAlpha10_zuchwil_ep999_visualGallery_globalScaleFirst_cosineSoftmaxT002
+    enabled: false
+    overrides:
+      selected_scene_name: zuchwil
+      load_stage2_ckpt: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage2_wingtra_intervalT90V0_softtripletAlpha10_zuchwil/epoch999.pth
+      inherit_stage2_yaml: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage2_wingtra_intervalT90V0_softtripletAlpha10_zuchwil/opts.yaml
+      stage3_recall_cfg: per_scene
+      hds_stage1_gallery_feature_source: visual_encoder
+      hds_stage1_visual_gallery_batch_size: 62
+      hds_stage1_visual_score_mode: cosine_softmax
+      hds_stage1_visual_softmax_temperature: 0.02
+      hds_stage1_n_scale: 4
+      hds_stage1_scale_spacing: log
+      hds_scale_select_mode: log_expectation
+      hds_scale_select_scope: global_query
+      hds_stage2_particles_m: 8
+      hds_stage2_enable_scale_sampling: false
+      hds_stage3_optimize_scale: false
       hds_eval_n_samples: null

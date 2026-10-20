@@ -1,37 +1,81 @@
 # 与 train_stage1 相同：name / enabled / base_yaml / overrides。
-# 每组仅训练一个场景；不同场景或不同 Stage 1 教师分别列一组。
-# base_yaml 相对项目根目录；省略时使用 --base-yaml（默认本目录 config.yaml）。
-# 先填写每组的 Stage 1 权重与对应 opts.yaml，再启动训练；留空可用于 dry-run。
-# 未覆盖的参数独立继承基础 YAML；enabled: false 跳过整组。
+# 每组只训练一个场景，并使用该场景测试集 R@1 最优的 Stage 1 checkpoint。
+# base_yaml 相对项目根目录；VisLoc 使用默认 config.yaml，Wingtra 显式使用 config_wingtra.yaml。
+# 未覆盖参数独立继承基础 YAML；批量运行时按以下顺序串行训练。
 experiments:
-  - name: stage2_visloc03
+  - name: stage2_visloc03_segmentT80V0_softtripletAlpha10
     enabled: false
     overrides:
       selected_scene_name: '03'
-      load_stage1_ckpt: '' # /path/to/stage1_visloc/epoch049.pth
-      inherit_stage1_yaml: '' # /path/to/stage1_visloc/opts.yaml
+      load_stage1_ckpt: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage1_vislocS9_segmentT80V0_softtripletAlpha10_4dof/epoch015_visloc03R1=93.377_visloc04R1=89.041.pth
+      inherit_stage1_yaml: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage1_vislocS9_segmentT80V0_softtripletAlpha10_4dof/opts.yaml
       num_epochs: 1000
       grid_mlp_hidden_dim: 1024
       grid_mlp_num_blocks: 2
 
-  - name: stage2_wingtra_zurich
+  - name: stage2_visloc04_segmentT80V0_softtripletAlpha10
+    enabled: false
+    overrides:
+      selected_scene_name: '04'
+      load_stage1_ckpt: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage1_vislocS9_segmentT80V0_softtripletAlpha10_4dof/epoch015_visloc03R1=93.377_visloc04R1=89.041.pth
+      inherit_stage1_yaml: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage1_vislocS9_segmentT80V0_softtripletAlpha10_4dof/opts.yaml
+      num_epochs: 1000
+      grid_mlp_hidden_dim: 1024
+      grid_mlp_num_blocks: 2
+
+  - name: stage2_visloc03_intervalT80V0_softtripletAlpha10
+    enabled: false
+    overrides:
+      selected_scene_name: '03'
+      load_stage1_ckpt: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage1_vislocS9_intervalT80V0_softtripletAlpha10_4dof/epoch021_visloc03R1=90.667_visloc04R1=90.345.pth
+      inherit_stage1_yaml: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage1_vislocS9_intervalT80V0_softtripletAlpha10_4dof/opts.yaml
+      num_epochs: 1000
+      grid_mlp_hidden_dim: 1024
+      grid_mlp_num_blocks: 2
+
+  - name: stage2_visloc04_intervalT80V0_softtripletAlpha10
+    enabled: false
+    overrides:
+      selected_scene_name: '04'
+      load_stage1_ckpt: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage1_vislocS9_intervalT80V0_softtripletAlpha10_4dof/epoch021_visloc03R1=90.667_visloc04R1=90.345.pth
+      inherit_stage1_yaml: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage1_vislocS9_intervalT80V0_softtripletAlpha10_4dof/opts.yaml
+      num_epochs: 1000
+      grid_mlp_hidden_dim: 1024
+      grid_mlp_num_blocks: 2
+
+  - name: stage2_wingtra_segmentT90V0_softtripletAlpha10_zurich
     base_yaml: experiments/train_stage2/config_wingtra.yaml
     enabled: false
     overrides:
       selected_scene_name: zurich
-      load_stage1_ckpt: '' # /path/to/stage1_wingtra/epoch049.pth
-      inherit_stage1_yaml: '' # /path/to/stage1_wingtra/opts.yaml
+      load_stage1_ckpt: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage1_wingtraS2_segmentT90V0_softtripletAlpha10_4dof/epoch012_zurichR1=89.121_zuchwilR1=77.457.pth
+      inherit_stage1_yaml: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage1_wingtraS2_segmentT90V0_softtripletAlpha10_4dof/opts.yaml
       num_epochs: 1000
       grid_mlp_hidden_dim: 1024
       grid_mlp_num_blocks: 2
 
-  - name: stage2_wingtra_intervalT00V0_softtripletAlpha10_zurich
+  - name: stage2_wingtra_segmentT90V0_softtripletAlpha10_zuchwil
+    base_yaml: experiments/train_stage2/config_wingtra.yaml
+    enabled: false
+    overrides:
+      selected_scene_name: zuchwil
+      load_stage1_ckpt: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage1_wingtraS2_segmentT90V0_softtripletAlpha10_4dof/epoch007_zurichR1=87.448_zuchwilR1=82.659.pth
+      inherit_stage1_yaml: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage1_wingtraS2_segmentT90V0_softtripletAlpha10_4dof/opts.yaml
+      num_epochs: 1000
+      grid_mlp_hidden_dim: 1024
+      grid_mlp_num_blocks: 2
+
+  # Zuchwil interval尺度采样对照：只改变sat尺度分布，关闭经验采样自带的尺度扰动。
+  - name: stage2_wingtra_intervalT90V0_softtripletAlpha10_zuchwil_scaleSamplingLogUni_woJitter
     base_yaml: experiments/train_stage2/config_wingtra.yaml
     enabled: true
     overrides:
-      selected_scene_name: zurich
-      load_stage1_ckpt: '/home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage1_wingtraS2_intervalT90V0_softtripletAlpha10_4dof/epoch018_zurichR1=80_zuchwilR1=77.pth' # /path/to/stage1_wingtra/epoch049.pth
-      inherit_stage1_yaml: '/home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage1_wingtraS2_intervalT90V0_softtripletAlpha10_4dof/opts.yaml' # /path/to/stage1_wingtra/opts.yaml
+      selected_scene_name: zuchwil
+      load_stage1_ckpt: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage1_wingtraS2_intervalT90V0_softtripletAlpha10_4dof/epoch018_zurichR1=80_zuchwilR1=77.pth
+      inherit_stage1_yaml: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage1_wingtraS2_intervalT90V0_softtripletAlpha10_4dof/opts.yaml
+      sat_scale_sampling_mode: uniform_log
+      sat_scale_jitter_enabled: false
+      sat_scale_jitter_half_span_ratio: 0.0
       num_epochs: 1000
       grid_mlp_hidden_dim: 1024
       grid_mlp_num_blocks: 2

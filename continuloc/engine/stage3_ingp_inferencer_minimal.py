@@ -257,6 +257,15 @@ class MinimalStage3INGPInferencer(MinimalStage2INGPTrainer):
             model.eval()
 
     def _resolve_hds_inference_config(self, n_bins_max):
+        scale_spacing = str(
+            getattr(self.opt, "hds_stage1_scale_spacing", "linear")
+        ).strip().lower()
+        if scale_spacing not in {"linear", "log"}:
+            raise ValueError(
+                "hds_stage1_scale_spacing must be 'linear' or 'log', "
+                f"got {scale_spacing!r}."
+            )
+
         rounds_t = int(getattr(self.opt, "hds_stage2_rounds_t"))
         if rounds_t <= 0:
             raise ValueError("hds_stage2_rounds_t must be positive.")
@@ -292,9 +301,39 @@ class MinimalStage3INGPInferencer(MinimalStage2INGPTrainer):
                 survival_ratio_per_round = survival_ratio_per_round[:rounds_t]
 
         particles_m = int(getattr(self.opt, "hds_stage2_particles_m"))
+        visual_score_mode = str(
+            getattr(self.opt, "hds_stage1_visual_score_mode", "raw_score")
+        ).strip().lower()
+        if visual_score_mode not in {"raw_score", "cosine_softmax"}:
+            raise ValueError(
+                "hds_stage1_visual_score_mode must be 'raw_score' or "
+                f"'cosine_softmax', got {visual_score_mode!r}."
+            )
+        visual_softmax_temperature = float(
+            getattr(self.opt, "hds_stage1_visual_softmax_temperature", 0.02)
+        )
+        if visual_softmax_temperature <= 0:
+            raise ValueError("hds_stage1_visual_softmax_temperature must be positive.")
+        scale_select_scope = str(
+            getattr(self.opt, "hds_scale_select_scope", "per_anchor")
+        ).strip().lower()
+        if scale_select_scope not in {"per_anchor", "global_query"}:
+            raise ValueError(
+                "hds_scale_select_scope must be 'per_anchor' or 'global_query', "
+                f"got {scale_select_scope!r}."
+            )
         return {
             "eval_n_samples": getattr(self.opt, "hds_eval_n_samples", None),
             "scale_select_mode": str(getattr(self.opt, "hds_scale_select_mode")),
+            "scale_select_scope": scale_select_scope,
+            "scale_spacing": scale_spacing,
+
+            "ge_prob_mode": str(getattr(self.opt, "hds_stage1_gallery_feature_source")),
+            "ge_visual_gallery_batch_size": int(
+                getattr(self.opt, "hds_stage1_visual_gallery_batch_size")
+            ),
+            "ge_visual_score_mode": visual_score_mode,
+            "ge_visual_softmax_temperature": visual_softmax_temperature,
 
             "ge_top_ratio_rho0": float(getattr(self.opt, "hds_stage1_top_ratio_rho0")),
             "ge_max_anchors_k0": int(getattr(self.opt, "hds_stage1_max_anchors_k0")),
@@ -333,10 +372,14 @@ class MinimalStage3INGPInferencer(MinimalStage2INGPTrainer):
             use_train_uav=use_train_uav,
             n_samples=hds_cfg["eval_n_samples"],
             n_bins_4d=n_bins_4d,
-            n_bins_scale_mode="linear",
+            n_bins_scale_mode=hds_cfg["scale_spacing"],
             scale_select_mode=hds_cfg["scale_select_mode"],
+            scale_select_scope=hds_cfg["scale_select_scope"],
 
-            ge_prob_mode="ingp",
+            ge_prob_mode=hds_cfg["ge_prob_mode"],
+            ge_visual_gallery_batch_size=hds_cfg["ge_visual_gallery_batch_size"],
+            ge_visual_score_mode=hds_cfg["ge_visual_score_mode"],
+            ge_visual_softmax_temperature=hds_cfg["ge_visual_softmax_temperature"],
             ge_top_ratio_rho0=hds_cfg["ge_top_ratio_rho0"],
             ge_topk_seed=None,
             ge_max_anchors_k0=hds_cfg["ge_max_anchors_k0"],

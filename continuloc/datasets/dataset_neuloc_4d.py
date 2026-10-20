@@ -400,6 +400,9 @@ class SatDataset(object):
                  name=None,
                  pad_mode=None,
                  enable_scale_filter=False,
+                 sat_scale_sampling_mode='empirical',
+                 sat_scale_jitter_enabled=True,
+                 sat_scale_jitter_half_span_ratio=0.05,
                  satellite_filepaths=None,
                  global_negative_sampling_grid=None,
                  **kwargs,
@@ -483,6 +486,26 @@ class SatDataset(object):
         self.satimgsize_scale_to_refm_boundary = self.satimgsize_scale_to_ref_m_boundary #为了兼容老版本调用
         self.satimgsize_scale_to_ref_m_list = (uav_h_cover_m/self.scale_ref_m)[scale_mask]
         self.satimgsize_scale_to_ref_m_mean = self.satimgsize_scale_to_ref_m_list.mean()
+
+        self.sat_scale_sampling_mode = str(sat_scale_sampling_mode).strip().lower()
+        supported_scale_sampling_modes = {'empirical', 'uniform_linear', 'uniform_log'}
+        if self.sat_scale_sampling_mode not in supported_scale_sampling_modes:
+            raise ValueError(
+                f"sat_scale_sampling_mode must be one of {sorted(supported_scale_sampling_modes)}, "
+                f"got {sat_scale_sampling_mode!r}."
+            )
+        if not isinstance(sat_scale_jitter_enabled, (bool, np.bool_)):
+            raise ValueError("sat_scale_jitter_enabled must be a boolean.")
+        self.sat_scale_jitter_enabled = bool(sat_scale_jitter_enabled)
+        self.sat_scale_jitter_half_span_ratio = float(sat_scale_jitter_half_span_ratio)
+        if (not np.isfinite(self.sat_scale_jitter_half_span_ratio)
+                or self.sat_scale_jitter_half_span_ratio < 0.0):
+            raise ValueError("sat_scale_jitter_half_span_ratio must be finite and non-negative.")
+        print(
+            f"[{self.name}] sat scale sampling={self.sat_scale_sampling_mode}, "
+            f"jitter={self.sat_scale_jitter_enabled}, "
+            f"jitter_half_span_ratio={self.sat_scale_jitter_half_span_ratio:g}."
+        )
 
         #  define the range when sampling the satmap:
         self.satmap_edge_pixs = self.satimgsize2crop_boundary[1] + 224 #
@@ -959,14 +982,29 @@ class SatDataset(object):
 
 
     """funcs about getting item:"""
+    def _sample_satimgsize2crop(self):
+        """Sample one satellite crop size using the configured scale distribution."""
+        crop_min, crop_max = map(float, self.satimgsize2crop_boundary)
+        if self.sat_scale_sampling_mode == 'empirical':
+            crop_size = float(np.random.choice(self.satimgsize_correspond2uav_list))
+        elif self.sat_scale_sampling_mode == 'uniform_linear':
+            crop_size = float(np.random.uniform(crop_min, crop_max))
+        else:
+            if crop_min <= 0.0:
+                raise ValueError("uniform_log scale sampling requires a positive minimum crop size.")
+            crop_size = float(np.exp(np.random.uniform(np.log(crop_min), np.log(crop_max))))
+
+        if self.sat_scale_jitter_enabled and self.sat_scale_jitter_half_span_ratio > 0.0:
+            jitter_radius = (crop_max - crop_min) * self.sat_scale_jitter_half_span_ratio
+            crop_size += float(np.random.uniform(-jitter_radius, jitter_radius))
+        return float(np.clip(crop_size, crop_min, crop_max))
+
     def __getitem__(self,index):
         """关于输出4d坐标的数值范围："""
         sat_nrc_rand = self.mk_rand_nrcs(1)[0]
 
         # handling size/scale
-        satimgsize2crop = np.clip(np.random.choice(self.satimgsize_correspond2uav_list) +  (np.random.rand() - 0.5) *\
-                           (self.satimgsize2crop_boundary[1]- self.satimgsize2crop_boundary[0]) * 0.1,
-                                  self.satimgsize2crop_boundary[0],self.satimgsize2crop_boundary[1])
+        satimgsize2crop = self._sample_satimgsize2crop()
         satimgsize_cover_ratio_to_refm = torch.tensor([satimgsize2crop*self.geo_res_m/self.scale_ref_m],dtype=torch.float32)
 
         # crop the satimg

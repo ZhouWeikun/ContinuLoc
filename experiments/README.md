@@ -11,3 +11,4 @@
 - `refine_after_retrieval/`：检索结果经过 GIM 匹配、内点重排与 Top-1 位姿修正。
 
 - `inference_stage3/`：固定粗搜索、种群收缩、CMA 精化的 Stage 3 单次与批量推理。
+- `analyse_stage3/`：读取 Stage 3 已保存预测，导出方向箭头、位置/旋转/尺度误差、排序图库和逐样本统计。

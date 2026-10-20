@@ -281,6 +281,25 @@ def get_parse(print_summary=True):
         choices=('full_4d', 'xy_only'),
         help='query-positive 配对对齐方式: full_4d=xy/rot/scale对齐, xy_only=仅xy对齐且sat positive固定rot=0、scale=train-mean',
     )
+    parser.add_argument(
+        '--sat_scale_sampling_mode',
+        default='empirical',
+        type=str,
+        choices=('empirical', 'uniform_linear', 'uniform_log'),
+        help='Stage 2卫星裁剪尺度采样: empirical=按UAV经验分布, uniform_linear=raw scale均匀, uniform_log=log(scale)均匀',
+    )
+    parser.add_argument(
+        '--sat_scale_jitter_enabled',
+        default=True,
+        type=lambda x: str(x).strip().lower() not in {'0', 'false', 'no', 'n'},
+        help='Stage 2卫星裁剪尺度是否叠加随机扰动',
+    )
+    parser.add_argument(
+        '--sat_scale_jitter_half_span_ratio',
+        default=0.05,
+        type=float,
+        help='尺度扰动半径占完整尺度跨度的比例；0.05表示加上±5%%*(scale_max-scale_min)',
+    )
 
     # Grid配置
     parser.add_argument('--freeze_grid', action='store_true', default=False,
@@ -510,6 +529,9 @@ def get_parse(print_summary=True):
             'reject_sampling',
             'sat_as_query',
             'pair_alignment_mode',
+            'sat_scale_sampling_mode',
+            'sat_scale_jitter_enabled',
+            'sat_scale_jitter_half_span_ratio',
         ],
         'hardware_setting': ['gpu_ids', 'num_worker', 'satmaps_on_cpu', 'autocast',
                             'batchsize_sat', 'batchsize_uav', 'batchsize_uav_test'],
@@ -570,6 +592,11 @@ def get_parse(print_summary=True):
             'hds_stage1_overlap',
             'hds_stage1_n_rot',
             'hds_stage1_n_scale',
+            'hds_stage1_scale_spacing',
+            'hds_stage1_gallery_feature_source',
+            'hds_stage1_visual_gallery_batch_size',
+            'hds_stage1_visual_score_mode',
+            'hds_stage1_visual_softmax_temperature',
             'hds_stage1_top_ratio_rho0',
             'hds_stage1_max_anchors_k0',
             'hds_stage2_rounds_t',
@@ -589,6 +616,7 @@ def get_parse(print_summary=True):
             'hds_score_chunk_size',
             'hds_eval_n_samples',
             'hds_scale_select_mode',
+            'hds_scale_select_scope',
         ],
     }
     opt.group_dict = group_info

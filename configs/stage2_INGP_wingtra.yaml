@@ -45,6 +45,11 @@ scenes_setting:
       p_uavinfo_json: /home/data/zwk/data_uavimgs_wingtra/Zuchwil/uavimgs_info/uavimgs_metainfo.json
       p_uav_geocsv: /home/data/zwk/data_uavimgs_wingtra/Zuchwil/uavimgs_info/uavimgs_geo_corrected_gim_dkm_v1.csv
       weight: 1.0
+data_setting:
+  # empirical复现旧采样；也可选uniform_linear或uniform_log。
+  sat_scale_sampling_mode: empirical
+  sat_scale_jitter_enabled: true
+  sat_scale_jitter_half_span_ratio: 0.05
 
 
 hardware_setting:
@@ -68,4 +73,3 @@ network_setting:
   grid_mlp_hidden_dim: 1024
   grid_mlp_num_blocks: 2
   grid_mlp_use_coord_condition: true
-

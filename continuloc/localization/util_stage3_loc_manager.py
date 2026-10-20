@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import torch.nn.functional as F
 import tqdm
 
 from continuloc.evaluation.util_core_eval import compute_topk_acc_from_coords, print_topk_eval_results
@@ -146,7 +147,7 @@ class Stage3FineLocManager:
 
     It keeps the original "one class does three things" workflow:
     1. build coarse candidates
-    2. score candidates with projector / ingp style metrics
+    2. score candidates with visual-encoder / projector / INGP metrics
     3. evaluate and report retrieval / localization results
     """
 
@@ -258,11 +259,16 @@ class Stage3FineLocManager:
     # Candidate Scoring
     # ============================================================
     @staticmethod
-    def validate_prob_mode(mode_name, mode_value):
+    def validate_prob_mode(mode_name, mode_value, allow_visual_encoder=False):
         mode_value = str(mode_value).lower()
-        if mode_value not in ("ingp", "projector", "product"):
+        if mode_value == "vis_encoder":
+            mode_value = "visual_encoder"
+        supported = {"ingp", "projector", "product"}
+        if allow_visual_encoder:
+            supported.add("visual_encoder")
+        if mode_value not in supported:
             raise ValueError(
-                f"{mode_name} must be one of ('ingp','projector','product'), got {mode_value}"
+                f"{mode_name} must be one of {sorted(supported)}, got {mode_value}"
             )
         return mode_value
 
@@ -320,6 +326,94 @@ class Stage3FineLocManager:
             score = score / (score.sum(dim=-1, keepdim=True) + 1e-8)
         return score
 
+    def build_visual_gallery_features(self, coords_candidates, batch_size=128):
+        """Crop the coarse satellite gallery and encode it with the Stage-1 visual model."""
+        batch_size = int(batch_size)
+        if batch_size <= 0:
+            raise ValueError("visual gallery batch_size must be positive.")
+        features = []
+        n_candidates = int(coords_candidates.shape[0])
+        with torch.no_grad():
+            for start in tqdm.tqdm(
+                range(0, n_candidates, batch_size),
+                desc="Build visual-encoder gallery",
+                leave=True,
+            ):
+                end = min(start + batch_size, n_candidates)
+                coords_chunk = coords_candidates[start:end]
+                satimgs = self.trainer.sat_dataset.crop_satimg_by_4d_coords_fast(
+                    coords_chunk,
+                    apply_rotation=True,
+                    chunk_size=batch_size,
+                )
+                feats_chunk = self.trainer._get_feats_fm_imgs(
+                    satimgs.to(self.trainer.device, non_blocking=True)
+                )
+                features.append(F.normalize(feats_chunk, dim=-1).cpu())
+        return torch.cat(features, dim=0)
+
+    def score_visual_gallery(
+            self,
+            query_feats,
+            gallery_features,
+            normalize=False,
+            score_mode="raw_score",
+            softmax_temperature=0.02,
+            n_scale=None,
+    ):
+        """Score visual query descriptors against a precomputed satellite gallery.
+
+        ``raw_score`` preserves the historical ``(2 - L2) / 2`` mapping.
+        ``cosine_softmax`` applies the temperature softmax along scale inside
+        each fixed (position, rotation) anchor.  It preserves that anchor's
+        historical raw-score mass, so this option changes scale decoding
+        without also changing position/rotation ranking.
+        """
+        query_feats = F.normalize(query_feats, dim=-1)
+        score_mode = str(score_mode).strip().lower()
+        if score_mode not in {"raw_score", "cosine_softmax"}:
+            raise ValueError(
+                "visual gallery score_mode must be 'raw_score' or "
+                f"'cosine_softmax', got {score_mode!r}."
+            )
+        softmax_temperature = float(softmax_temperature)
+        if score_mode == "cosine_softmax" and softmax_temperature <= 0:
+            raise ValueError("visual gallery softmax_temperature must be positive.")
+        if score_mode == "cosine_softmax":
+            if n_scale is None or int(n_scale) <= 0:
+                raise ValueError("n_scale must be positive for cosine_softmax scoring.")
+            n_scale = int(n_scale)
+            if int(gallery_features.shape[0]) % n_scale != 0:
+                raise ValueError("visual gallery candidate count must be divisible by n_scale.")
+
+        score_chunks = []
+        for start in range(0, int(gallery_features.shape[0]), self.chunk_size):
+            end = min(start + self.chunk_size, int(gallery_features.shape[0]))
+            refs = gallery_features[start:end].to(
+                device=query_feats.device,
+                dtype=query_feats.dtype,
+                non_blocking=True,
+            )
+            if score_mode == "cosine_softmax":
+                score_chunks.append(query_feats @ refs.transpose(0, 1))
+            else:
+                dist = torch.cdist(query_feats, refs)
+                score_chunks.append((2.0 - dist).clamp(min=0.0) / 2.0)
+        score = torch.cat(score_chunks, dim=-1)
+        if score_mode == "cosine_softmax":
+            cosine_by_anchor = score.reshape(score.shape[0], -1, n_scale)
+            scale_weights = F.softmax(cosine_by_anchor / softmax_temperature, dim=-1)
+            dist_by_anchor = torch.sqrt((2.0 - 2.0 * cosine_by_anchor).clamp(min=0.0))
+            raw_by_anchor = (2.0 - dist_by_anchor).clamp(min=0.0) / 2.0
+            anchor_mass = raw_by_anchor.sum(dim=-1, keepdim=True)
+            score = (anchor_mass * scale_weights).reshape(score.shape[0], -1)
+            if normalize:
+                score = score / (score.sum(dim=-1, keepdim=True) + 1e-8)
+            return score
+        if normalize:
+            score = score / (score.sum(dim=-1, keepdim=True) + 1e-8)
+        return score
+
     # ============================================================
     # Coarse Retrieval Runtime
     # ============================================================
@@ -331,6 +425,9 @@ class Stage3FineLocManager:
         n_bins_4d=None,
         n_bins_scale_mode="linear",
         l0_prob_mode="ingp",
+        l0_visual_gallery_batch_size=128,
+        l0_visual_score_mode="raw_score",
+        l0_visual_softmax_temperature=0.02,
         save_pred_pdf=False,
         save_tag="prefilter",
         report_title="Spatial Classification Results (wo eval scale)",
@@ -349,6 +446,15 @@ class Stage3FineLocManager:
         n_coarse = candidate_info["n_coarse"]
         n_coarse_3d = candidate_info["n_coarse_3d"]
         cell_centers_3d = candidate_info["cell_centers_3d"]
+        l0_prob_mode = self.validate_prob_mode(
+            "l0_prob_mode", l0_prob_mode, allow_visual_encoder=True
+        )
+        visual_gallery_features = None
+        if l0_prob_mode == "visual_encoder":
+            visual_gallery_features = self.build_visual_gallery_features(
+                coords_candidates_flat,
+                batch_size=l0_visual_gallery_batch_size,
+            )
 
         processed = 0
         pred_pdf_3d_list = []
@@ -385,13 +491,23 @@ class Stage3FineLocManager:
                     batch_size = remain
 
                 feats_vis = self.trainer._get_feats_fm_imgs(imgs)
-                possibilities = self.score_candidates(
-                    query_feats=feats_vis,
-                    coords_batch=coords_candidates_flat,
-                    mode=l0_prob_mode,
-                    normalize=True,
-                    projector_metric="possibility",
-                )
+                if l0_prob_mode == "visual_encoder":
+                    possibilities = self.score_visual_gallery(
+                        query_feats=feats_vis,
+                        gallery_features=visual_gallery_features,
+                        normalize=True,
+                        score_mode=l0_visual_score_mode,
+                        softmax_temperature=l0_visual_softmax_temperature,
+                        n_scale=int(n_coarse[3]),
+                    )
+                else:
+                    possibilities = self.score_candidates(
+                        query_feats=feats_vis,
+                        coords_batch=coords_candidates_flat,
+                        mode=l0_prob_mode,
+                        normalize=True,
+                        projector_metric="possibility",
+                    )
 
                 possibilities_reshaped = possibilities.reshape(batch_size, *n_coarse)
                 logits_3d = possibilities_reshaped.sum(dim=-1)
@@ -452,6 +568,9 @@ class Stage3FineLocManager:
                 "report_title": str(report_title),
                 "metrics": spatial_classification_metrics,
             },
+            "l0_gallery_feature_source": l0_prob_mode,
+            "l0_visual_score_mode": str(l0_visual_score_mode),
+            "l0_visual_softmax_temperature": float(l0_visual_softmax_temperature),
         }
 
     # ============================================================

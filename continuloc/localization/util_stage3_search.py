@@ -193,6 +193,7 @@ def _build_cma_init_seeds(
             n_coarse,
             topk_seed,
             scale_select_mode="argmax",
+            scale_select_scope="per_anchor",
             selection_space="3d",
     ):
         """
@@ -230,9 +231,27 @@ def _build_cma_init_seeds(
             raise ValueError(
                 f"scale_select_mode must be 'argmax' or 'log_expectation', got {scale_select_mode}"
             )
+        scale_select_scope = str(scale_select_scope).strip().lower()
+        if scale_select_scope not in ("per_anchor", "global_query"):
+            raise ValueError(
+                "scale_select_scope must be 'per_anchor' or 'global_query', "
+                f"got {scale_select_scope}"
+            )
 
         l0_prob_q_4d = l0_prob_q.reshape(n_nr, n_nc, n_rot, n_scale)
         coords_candidates_4d = coords_candidates_flat.reshape(n_nr, n_nc, n_rot, n_scale, 4)
+
+        global_scale_hat = None
+        if scale_select_scope == "global_query":
+            scale_probs_global = l0_prob_q_4d.sum(dim=(0, 1, 2))
+            scale_vals_global = coords_candidates_4d[0, 0, 0, :, 3].clamp(min=1e-6)
+            if scale_select_mode == "argmax":
+                global_scale_hat = scale_vals_global[torch.argmax(scale_probs_global)]
+            else:
+                scale_weights_global = scale_probs_global / (scale_probs_global.sum() + 1e-8)
+                global_scale_hat = torch.exp(
+                    torch.sum(scale_weights_global * torch.log(scale_vals_global))
+                )
 
         if selection_space == "2d":
             cell_scores_2d = l0_prob_q_4d.sum(dim=(2, 3)).reshape(-1)
@@ -253,16 +272,19 @@ def _build_cma_init_seeds(
             rot_cos = torch.sum(rot_weights * torch.cos(rot_vals), dim=-1)
             rot_hat = torch.atan2(rot_sin, rot_cos)
 
-            scale_probs = probs_by_cell.sum(dim=1)
-            scale_vals = coords_by_cell[:, 0, :, 3].clamp(min=1e-6)
-            if scale_select_mode == "argmax":
-                best_scale_idx = torch.argmax(scale_probs, dim=-1)
-                row_idx = torch.arange(topk_seed, device=coords_candidates_flat.device)
-                scale_hat = scale_vals[row_idx, best_scale_idx]
+            if global_scale_hat is not None:
+                scale_hat = global_scale_hat.expand(topk_seed)
             else:
-                scale_weights = scale_probs / (scale_probs.sum(dim=-1, keepdim=True) + 1e-8)
-                scale_log_hat = torch.sum(scale_weights * torch.log(scale_vals), dim=-1)
-                scale_hat = torch.exp(scale_log_hat)
+                scale_probs = probs_by_cell.sum(dim=1)
+                scale_vals = coords_by_cell[:, 0, :, 3].clamp(min=1e-6)
+                if scale_select_mode == "argmax":
+                    best_scale_idx = torch.argmax(scale_probs, dim=-1)
+                    row_idx = torch.arange(topk_seed, device=coords_candidates_flat.device)
+                    scale_hat = scale_vals[row_idx, best_scale_idx]
+                else:
+                    scale_weights = scale_probs / (scale_probs.sum(dim=-1, keepdim=True) + 1e-8)
+                    scale_log_hat = torch.sum(scale_weights * torch.log(scale_vals), dim=-1)
+                    scale_hat = torch.exp(scale_log_hat)
 
             seed_coords = coords_by_cell[:, 0, 0, :].clone()
             seed_coords[:, 2] = rot_hat
@@ -281,7 +303,11 @@ def _build_cma_init_seeds(
         probs_by_anchor = l0_prob_q_4d.reshape(-1, n_scale).index_select(0, anchor_idx_3d)
         coords_by_anchor = coords_candidates_flat.reshape(n_nr * n_nc * n_rot, n_scale, 4).index_select(0, anchor_idx_3d)
 
-        if scale_select_mode == "argmax":
+        if global_scale_hat is not None:
+            seed_coords = coords_by_anchor[:, 0, :].clone()
+            seed_coords[:, 3] = global_scale_hat
+            seed_scores = anchor_scores_sel
+        elif scale_select_mode == "argmax":
             best_scale_idx = torch.argmax(probs_by_anchor, dim=-1)
             row_idx = torch.arange(topk_seed, device=coords_candidates_flat.device)
             seed_coords = coords_by_anchor[row_idx, best_scale_idx]
@@ -593,8 +619,12 @@ def _test_3d_fine_accuracy_hds(
             n_bins_scale_mode="linear",
             eval_thresh_cfg=None,
             scale_select_mode="log_expectation",
+            scale_select_scope="per_anchor",
 
             ge_prob_mode="ingp",
+            ge_visual_gallery_batch_size=128,
+            ge_visual_score_mode="raw_score",
+            ge_visual_softmax_temperature=0.02,
             ge_top_ratio_rho0=None,
             ge_topk_seed=None,
             ge_max_anchors_k0=None,
@@ -648,11 +678,15 @@ def _test_3d_fine_accuracy_hds(
             n_bins_4d=n_bins_4d,
             n_bins_scale_mode=n_bins_scale_mode,
             l0_prob_mode=ge_prob_mode,
+            l0_visual_gallery_batch_size=ge_visual_gallery_batch_size,
+            l0_visual_score_mode=ge_visual_score_mode,
+            l0_visual_softmax_temperature=ge_visual_softmax_temperature,
             l0_topN=ge_topk_seed,
             l0_ratio=ge_top_ratio_rho0,
             stage1_mode_input_max=ge_max_anchors_k0,
             eval_thresh_cfg=eval_thresh_cfg,
             scale_select_mode=scale_select_mode,
+            scale_select_scope=scale_select_scope,
             l0_seed_selection_space=ge_seed_selection_space,
             stage1_alpha=1.0,
             stage1_prob_mode=pc_score_mode,
@@ -688,10 +722,14 @@ def _test_3d_fine_accuracy_hds(
         )
         dict_res["hds_interface_config"] = {
             "ge_prob_mode": str(ge_prob_mode),
+            "ge_visual_gallery_batch_size": int(ge_visual_gallery_batch_size),
+            "ge_visual_score_mode": str(ge_visual_score_mode),
+            "ge_visual_softmax_temperature": float(ge_visual_softmax_temperature),
             "ge_top_ratio_rho0": None if ge_top_ratio_rho0 is None else float(ge_top_ratio_rho0),
             "ge_topk_seed": None if ge_topk_seed is None else int(ge_topk_seed),
             "ge_max_anchors_k0": None if ge_max_anchors_k0 is None else int(ge_max_anchors_k0),
             "ge_seed_selection_space": str(ge_seed_selection_space),
+            "scale_select_scope": str(scale_select_scope),
             "pc_score_mode": str(pc_score_mode),
             "pc_particles_per_round": [int(x) for x in self._ensure_param_sequence(pc_particles_per_round, int)],
             "pc_radius_scale_per_round": [float(x) for x in self._ensure_param_sequence(pc_radius_scale_per_round, float)],
@@ -735,11 +773,15 @@ def _test_3d_fine_accuracy_seed_mode_CMA_ES(
             n_bins_4d=None,
             n_bins_scale_mode="log",
             l0_prob_mode='ingp',
+            l0_visual_gallery_batch_size=128,
+            l0_visual_score_mode="raw_score",
+            l0_visual_softmax_temperature=0.02,
             l0_topN=64,
             l0_ratio=None,
             stage1_mode_input_max=None,
             eval_thresh_cfg=None,
             scale_select_mode='argmax',
+            scale_select_scope="per_anchor",
             l0_seed_selection_space="2d",
             stage1_alpha=1.0,
             stage1_prob_mode='ingp',
@@ -813,7 +855,13 @@ def _test_3d_fine_accuracy_seed_mode_CMA_ES(
                 自定义网格时 scale 维的离散方式。
 
             l0_prob_mode (str):
-                Stage 0 / L0 粗筛评分模式，可选 {'ingp','projector','product'}。
+                Stage 0 / L0 粗筛评分模式，可选 {'ingp','visual_encoder','projector','product'}。
+            l0_visual_gallery_batch_size (int):
+                visual_encoder 模式制作卫星 gallery 时每次送入视觉编码器的裁剪数量。
+            l0_visual_score_mode (str):
+                visual_encoder gallery 的评分映射：raw_score 或 cosine_softmax。
+            l0_visual_softmax_temperature (float):
+                cosine_softmax 的温度，必须大于 0。
             l0_topN (int | None):
                 从 coarse seeds 中保留多少个 seed 进入 Stage 1。
                 若为 None，则改用 l0_ratio * coarse 3D anchor 总数解析。
@@ -828,6 +876,9 @@ def _test_3d_fine_accuracy_seed_mode_CMA_ES(
                 coarse 4D -> 初始 seed 时如何解析 scale：
                 - 'argmax': 取最佳离散 scale
                 - 'log_expectation': 对 log-scale 做加权平均
+            scale_select_scope (str):
+                - 'per_anchor': 每个空间/旋转锚点独立估计尺度
+                - 'global_query': 先边缘化空间和旋转，为整个 query 估计唯一尺度
             l0_seed_selection_space (str):
                 L0 seed topN 选择空间，可选 {'2d','3d'}。
                 '2d' 先对 rot/scale 积分得到 2D 概率体，再估计连续 rot/scale；
@@ -955,7 +1006,9 @@ def _test_3d_fine_accuracy_seed_mode_CMA_ES(
             scores = torch.nan_to_num(scores, nan=-1e9, posinf=1e9, neginf=-1e9)
             return scores
 
-        l0_prob_mode = evaluator.validate_prob_mode("l0_prob_mode", l0_prob_mode)
+        l0_prob_mode = evaluator.validate_prob_mode(
+            "l0_prob_mode", l0_prob_mode, allow_visual_encoder=True
+        )
         cma_prob_mode = evaluator.validate_prob_mode("cma_prob_mode", cma_prob_mode)
         stage4_prob_mode = evaluator.validate_prob_mode("stage4_prob_mode", stage4_prob_mode)
         stage4_opt_space = str(stage4_opt_space).strip().lower()
@@ -1015,6 +1068,9 @@ def _test_3d_fine_accuracy_seed_mode_CMA_ES(
             n_bins_4d=n_bins_4d,
             n_bins_scale_mode=n_bins_scale_mode,
             l0_prob_mode=l0_prob_mode,
+            l0_visual_gallery_batch_size=l0_visual_gallery_batch_size,
+            l0_visual_score_mode=l0_visual_score_mode,
+            l0_visual_softmax_temperature=l0_visual_softmax_temperature,
             save_pred_pdf=save_pred_pdf,
             save_tag="seed_mode_pipeline",
             report_title="Spatial Classification Results (Seed-Mode Pipeline, wo eval scale)",
@@ -1182,6 +1238,7 @@ def _test_3d_fine_accuracy_seed_mode_CMA_ES(
                     n_coarse=n_coarse,
                     topk_seed=topk_seed,
                     scale_select_mode=scale_select_mode,
+                    scale_select_scope=scale_select_scope,
                     selection_space=l0_seed_selection_space,
                 )
                 seed_build_s = time.perf_counter() - t_seed_build0
@@ -1381,6 +1438,8 @@ def _test_3d_fine_accuracy_seed_mode_CMA_ES(
             "n_bins_4d_requested": None if n_bins_4d is None else [int(x) for x in n_bins_4d],
             "n_bins_scale_mode": str(n_bins_scale_mode),
             "l0_prob_mode": str(l0_prob_mode),
+            "l0_visual_score_mode": str(l0_visual_score_mode),
+            "l0_visual_softmax_temperature": float(l0_visual_softmax_temperature),
             "l0_topN": None if l0_topN is None else int(l0_topN),
             "l0_ratio": None if l0_ratio is None else float(l0_ratio),
             "stage1_mode_input_max": None if stage1_mode_input_max is None else int(stage1_mode_input_max),
@@ -1396,6 +1455,7 @@ def _test_3d_fine_accuracy_seed_mode_CMA_ES(
                 "scale_ratio_th": None if evaluator.final_eval_cfg["scale_ratio_th"] is None else float(evaluator.final_eval_cfg["scale_ratio_th"]),
             },
             "scale_select_mode": str(scale_select_mode),
+            "scale_select_scope": str(scale_select_scope),
             "l0_seed_selection_space": str(l0_seed_selection_space),
             "stage1_alpha": float(stage1_alpha),
             "stage1_prob_mode": str(stage1_prob_mode),

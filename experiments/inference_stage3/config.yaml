@@ -1,46 +1,105 @@
-# 场景与网络默认继承 Stage 2 opts.yaml；每次运行自动分配输出目录。
+# Stage 3 单组推理模板。这里的 hds_stage1/2/3 指一次推理内部的三个搜索阶段，
+# 与模型训练的 Stage 1/Stage 2 不是同一组概念。
+# 网络、数据、场景默认从 Stage 2 opts.yaml 继承；启动器会为每次运行创建独立目录。
 exp_setting:
+  # 启动器会将本次日志目录改为 gen_fm_exps/logs/inference_stage3/<运行名>。
   dir2save_log: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/logs
+  # 通用配置所需的权重根目录；本推理实验读取下方指定的 checkpoint。
   dir2save_ckpt: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts
+  # 运行名前缀；实际目录名会追加 UTC 时间戳。批量实验会用各组 name 覆盖。
   exp_name: stage3_inference
+  # 推理不需要训练曲线；保留通用配置项。
   tensorboard: false
+  # 通用验证开关；Stage 3 的结果仍会按数据集 split 分别统计 val/test。
   val: false
+  # 必填：训练好的单场景 Stage 2 权重及其对应 opts.yaml，必须配套。
   load_stage2_ckpt: ''
   inherit_stage2_yaml: ''
+  # 留空则输出到 gen_fm_exps/inference_stage3/<运行名>；显式填写时目录须不存在。
   stage3_analysis_export_root: ''
+  # 从 Stage 2 opts 继承网络、数据和场景；本 YAML 显式填写的同名字段优先。
   inherit_stage2_scope: network,data,scenes
+  # 从 Stage 2 opts 追溯它训练时使用的 Stage 1 权重和配置。
   inherit_stage1_fm_stage2: true
+  # Stage 1 配置只继承网络参数，供加载特征提取器使用。
   inherit_stage1_fm_stage2_scope: network
+  # per_scene 根据场景名选评估阈值；未列出的场景回退配置文件的 default。
+  # 也可直接写 cfg01、cfg02 等。阈值只用于评估，不控制搜索半径。
   stage3_recall_cfg: per_scene
+  # 命名阈值与场景映射定义文件，路径相对项目根目录。
   stage3_recall_cfg_yaml: configs/stage3_recall_thresholds.yaml
+  # 留空则从 Stage 2 opts 推断；显式指定时必须与 Stage 2 的单场景一致。
   selected_scene_name: ''
+  # 是否在控制台打印粗搜索、种群收缩、CMA 各阶段的 Recall@K。
   stage3_print_progressive_recall: true
 hardware_setting:
+  # 使用的 GPU 编号（沿用项目通用配置格式）。
   gpu_ids: '0'
+  # 评估数据加载的 worker 数。
   num_worker: 8
+  # 卫星地图留在 CPU 侧，减少预先占用的显存。
   satmaps_on_cpu: true
 inference_setting:
+  # 阶段 1：粗搜索。空间网格步长约为裁剪图尺寸 × (1 - overlap)；范围 [0, 1)。
   hds_stage1_overlap: 0.0
+  # 旋转离散格数（覆盖 360°）与尺度离散格数；空间格数由场景和 overlap 计算。
   hds_stage1_n_rot: 36
   hds_stage1_n_scale: 4
+  # 尺度网格间隔：linear 在尺度值上等间隔，log 在 log(尺度) 上等间隔。
+  # 该项控制候选网格本身，区别于下方对离散尺度得分进行汇总的 hds_scale_select_mode。
+  hds_stage1_scale_spacing: linear
+  # 初始粗搜索gallery的特征来源：
+  # ingp 直接按候选坐标查询Stage 2特征场；visual_encoder则按候选4D坐标裁卫星图，
+  # 使用Stage 1视觉编码器提取gallery特征。该开关只影响阶段1粗搜索，后续阶段仍使用INGP。
+  hds_stage1_gallery_feature_source: ingp #visual_encoder | ingp
+  # visual_encoder模式制作gallery时的视觉网络前向批大小；不影响候选评分分块大小。
+  hds_stage1_visual_gallery_batch_size: 1024
+  # visual_encoder gallery 的相似度校准方式。cosine_softmax 直接对归一化特征的
+  # cosine similarity 在每个固定(位置,旋转)锚点内沿尺度维使用温度 softmax，
+  # 同时保留该锚点原始分数总量，因此只改变尺度解码而不改变位置/旋转锚点排序。
+  # raw_score 保留旧的 (2-L2)/2 映射用于消融。
+  hds_stage1_visual_score_mode: cosine_softmax # cosine_softmax | raw_score
+  hds_stage1_visual_softmax_temperature: 0.02
+  # 粗搜索以 (位置格, 旋转格) 为锚点，对尺度求和后保留得分最高的比例。
+  # 实际初始锚点数为 ceil(总锚点数 × rho0)，再受 max_anchors_k0 限制。
   hds_stage1_top_ratio_rho0: 0.1
   hds_stage1_max_anchors_k0: 1024
+  # 阶段 2：围绕每个候选锚点做种群收缩。rounds_t 为轮数；
+  # particles_m 为每轮、每个仍存活候选采样的粒子数。
   hds_stage2_rounds_t: 2
   hds_stage2_particles_m: 8
-  hds_stage2_initial_radius_eta: 1.0
+  # 第 t 轮局部采样半径系数 = eta × alpha^t（t 从 0 开始）。
+  # 相对于粗网格半格宽度缩放，属于归一化搜索空间的比例，不是米数。
+  hds_stage2_initial_radius_eta: 1.1
   hds_stage2_radius_decay_alpha: 0.5
+  # 每轮选得分最高的 rho 比例粒子，聚合后更新该候选的中心。
   hds_stage2_elite_ratio_rho: 0.125
+  # 每轮保留的候选群比例；列表依轮次对应，短于轮数时重复最后一项。
   hds_stage2_population_survival_ratio_rho_pop:
-  - 0.25
-  - 0.125
+    - 0.25
+    - 0.125
+  # false 时阶段 2 固定各候选的尺度，只采样位置和旋转。
   hds_stage2_enable_scale_sampling: false
+  # 阶段 3：至多取前 k2 个收缩后的候选，分别进行 CMA 局部精化。
   hds_stage3_max_modes_k2: 5
+  # Sep-CMA 使用对角协方差；也支持 CMA。
   hds_stage3_cma_variant: Sep-CMA
-  hds_stage3_cma_sigma_factor: 1.05
+  # CMA 初始 sigma = 此系数 × 阶段 2 最后一轮半径系数 × 2 / max(空间网格行数, 列数)。
+  # 这是归一化坐标中的优化步长，不是米制距离或评估阈值。
+  hds_stage3_cma_sigma_factor: 1.1
+  # 每个候选每代的 CMA 种群数、最多迭代代数、连续无提升时的早停代数。
   hds_stage3_cma_popsize: 32
   hds_stage3_cma_iters: 12
   hds_stage3_cma_early_stop_patience: 5
+  # false 时 CMA 只优化位置和旋转，尺度固定为传入候选的尺度。
   hds_stage3_optimize_scale: false
+  # 候选评分的前向分块大小；调小通常可降低峰值显存，但会增加耗时。
   hds_score_chunk_size: 32768
+  # null 评估全部 query；正整数仅取数据加载顺序的前 N 个，用于快速检查。
   hds_eval_n_samples: null
+  # 粗搜索锚点的尺度选择：log_expectation 对 log(尺度) 做概率加权平均；
+  # argmax 则选得分最高的离散尺度。此处不改变粗网格本身的尺度采样。
   hds_scale_select_mode: log_expectation
+  # per_anchor 为每个(xy,rot)候选独立估计尺度；global_query 先对xy/rot边缘化，
+  # 为整个query确定唯一尺度，再将它固定到全部后续seed轨迹。
+  hds_scale_select_scope: per_anchor # global_query | per_anchor

@@ -183,6 +183,9 @@ class BaseTrainer:
                 name=scene_name,
                 device=sat_device,
                 enable_scale_filter=getattr(opt, "enable_scale_filter", False),
+                sat_scale_sampling_mode=getattr(opt, "sat_scale_sampling_mode", "empirical"),
+                sat_scale_jitter_enabled=getattr(opt, "sat_scale_jitter_enabled", True),
+                sat_scale_jitter_half_span_ratio=getattr(opt, "sat_scale_jitter_half_span_ratio", 0.05),
                 pad_mode=pad_mode,
             )
             self.sat_datasets[scene_name] = sat_dataset
