@@ -45,8 +45,11 @@ python experiments/inference_stage3/run.py --config /path/to/config.yaml
   scale 维做 softmax；锚点原始总分保持不变。当前实验温度为 `0.02`。实际使用的 3D
   seed 路径把每个 `(位置, rotation)` 当作独立锚点，不会先汇总36个 rotation。
 - `hds_scale_select_scope`：`per_anchor` 为每个 `(位置, rotation)` 锚点分别解析尺度；
-  `global_query` 先对位置和旋转边缘化，为一个 query 解析唯一尺度，再把它固定到所有
-  Population Contraction 和 CMA 轨迹。后者对应 scale-first 推理。
+  `global_pose_max` 对每个尺度先计算全部位置和旋转中的最大原始 cosine
+  `S(s)=max_(x,y,r) cosine(q,f_sat(x,y,r,s))`，再用
+  `hds_stage1_visual_softmax_temperature` 做尺度 softmax，为一个 query 解析唯一尺度并固定到
+  全部 Population Contraction 和 CMA 轨迹。该模式要求 Visual Gallery 与
+  `cosine_softmax`，并应关闭后续尺度采样和优化。
 - `hds_stage2_*`：种群收缩轮数、粒子数量、搜索半径、elite 与存活比例。
 - `hds_stage3_*`：CMA 模式数量、种群、迭代与提前停止参数。
 - `hds_score_chunk_size`：评分分块大小；不改变搜索阶段。

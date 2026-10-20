@@ -72,7 +72,7 @@ experiments:
       hds_eval_n_samples: null
 
   - name: stage3_wingtra_intervalT90V0_softtripletAlpha10_zuchwil_ep999_stage3OptScale
-    enabled: true
+    enabled: false
     overrides:
       selected_scene_name: zuchwil
       load_stage2_ckpt: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage2_wingtra_intervalT90V0_softtripletAlpha10_zuchwil/epoch999.pth
@@ -121,9 +121,10 @@ experiments:
       hds_stage3_optimize_scale: false
       hds_eval_n_samples: null
 
-  # Query级scale-first：先由Visual Gallery确定唯一尺度，随后INGP只搜索xy/rotation。
-  - name: stage3_wingtra_intervalT90V0_softtripletAlpha10_zuchwil_ep999_visualGallery_globalScaleFirst_cosineSoftmaxT002
-    enabled: false
+  # Query级scale-first：每个尺度先取全部(xy,rotation)中的最大cosine，再跨尺度softmax；
+  # 确定唯一尺度后固定尺度，INGP只搜索xy/rotation。
+  - name: stage3_wingtra_intervalT90V0_softtripletAlpha10_zuchwil_ep999_visualGallery_globalPoseMax_cosineSoftmaxT002
+    enabled: true
     overrides:
       selected_scene_name: zuchwil
       load_stage2_ckpt: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage2_wingtra_intervalT90V0_softtripletAlpha10_zuchwil/epoch999.pth
@@ -136,7 +137,7 @@ experiments:
       hds_stage1_n_scale: 4
       hds_stage1_scale_spacing: log
       hds_scale_select_mode: log_expectation
-      hds_scale_select_scope: global_query
+      hds_scale_select_scope: global_pose_max
       hds_stage2_particles_m: 8
       hds_stage2_enable_scale_sampling: false
       hds_stage3_optimize_scale: false

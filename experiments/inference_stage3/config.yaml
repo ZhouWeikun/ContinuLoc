@@ -100,6 +100,7 @@ inference_setting:
   # 粗搜索锚点的尺度选择：log_expectation 对 log(尺度) 做概率加权平均；
   # argmax 则选得分最高的离散尺度。此处不改变粗网格本身的尺度采样。
   hds_scale_select_mode: log_expectation
-  # per_anchor 为每个(xy,rot)候选独立估计尺度；global_query 先对xy/rot边缘化，
-  # 为整个query确定唯一尺度，再将它固定到全部后续seed轨迹。
-  hds_scale_select_scope: per_anchor # global_query | per_anchor
+  # per_anchor 为每个(xy,rot)候选独立估计尺度；global_pose_max 对每个尺度先取全部
+  # (xy,rot)候选中的最大原始cosine，再用上方温度做softmax，为query确定唯一尺度。
+  # 唯一尺度会固定到全部后续seed轨迹，因此需关闭阶段2/3的尺度采样与优化。
+  hds_scale_select_scope: per_anchor # global_pose_max | per_anchor

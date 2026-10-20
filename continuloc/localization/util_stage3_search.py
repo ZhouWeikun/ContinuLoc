@@ -232,9 +232,9 @@ def _build_cma_init_seeds(
                 f"scale_select_mode must be 'argmax' or 'log_expectation', got {scale_select_mode}"
             )
         scale_select_scope = str(scale_select_scope).strip().lower()
-        if scale_select_scope not in ("per_anchor", "global_query"):
+        if scale_select_scope not in ("per_anchor", "global_pose_max"):
             raise ValueError(
-                "scale_select_scope must be 'per_anchor' or 'global_query', "
+                "scale_select_scope must be 'per_anchor' or 'global_pose_max', "
                 f"got {scale_select_scope}"
             )
 
@@ -242,7 +242,9 @@ def _build_cma_init_seeds(
         coords_candidates_4d = coords_candidates_flat.reshape(n_nr, n_nc, n_rot, n_scale, 4)
 
         global_scale_hat = None
-        if scale_select_scope == "global_query":
+        if scale_select_scope == "global_pose_max":
+            # score_visual_gallery constructs a joint distribution whose
+            # scale marginal is softmax(max_{x,y,r}(cosine) / temperature).
             scale_probs_global = l0_prob_q_4d.sum(dim=(0, 1, 2))
             scale_vals_global = coords_candidates_4d[0, 0, 0, :, 3].clamp(min=1e-6)
             if scale_select_mode == "argmax":
@@ -878,7 +880,8 @@ def _test_3d_fine_accuracy_seed_mode_CMA_ES(
                 - 'log_expectation': 对 log-scale 做加权平均
             scale_select_scope (str):
                 - 'per_anchor': 每个空间/旋转锚点独立估计尺度
-                - 'global_query': 先边缘化空间和旋转，为整个 query 估计唯一尺度
+                - 'global_pose_max': 每个尺度先对空间和旋转取最大 cosine，
+                  再经温度 softmax 为整个 query 估计唯一尺度
             l0_seed_selection_space (str):
                 L0 seed topN 选择空间，可选 {'2d','3d'}。
                 '2d' 先对 rot/scale 积分得到 2D 概率体，再估计连续 rot/scale；
@@ -1019,6 +1022,22 @@ def _test_3d_fine_accuracy_seed_mode_CMA_ES(
         scale_select_mode = str(scale_select_mode).strip().lower()
         if scale_select_mode not in ("argmax", "log_expectation"):
             raise ValueError(f"scale_select_mode must be 'argmax' or 'log_expectation', got {scale_select_mode}")
+        scale_select_scope = str(scale_select_scope).strip().lower()
+        if scale_select_scope not in ("per_anchor", "global_pose_max"):
+            raise ValueError(
+                "scale_select_scope must be 'per_anchor' or 'global_pose_max', "
+                f"got {scale_select_scope}"
+            )
+        if scale_select_scope == "global_pose_max":
+            if l0_prob_mode != "visual_encoder":
+                raise ValueError(
+                    "global_pose_max requires l0_prob_mode='visual_encoder'."
+                )
+            if str(l0_visual_score_mode).strip().lower() != "cosine_softmax":
+                raise ValueError(
+                    "global_pose_max requires "
+                    "l0_visual_score_mode='cosine_softmax'."
+                )
         l0_seed_selection_space = str(l0_seed_selection_space).strip().lower()
         if l0_seed_selection_space in ("2d_cell", "spatial", "nr_nc"):
             l0_seed_selection_space = "2d"
@@ -1071,6 +1090,7 @@ def _test_3d_fine_accuracy_seed_mode_CMA_ES(
             l0_visual_gallery_batch_size=l0_visual_gallery_batch_size,
             l0_visual_score_mode=l0_visual_score_mode,
             l0_visual_softmax_temperature=l0_visual_softmax_temperature,
+            l0_scale_select_scope=scale_select_scope,
             save_pred_pdf=save_pred_pdf,
             save_tag="seed_mode_pipeline",
             report_title="Spatial Classification Results (Seed-Mode Pipeline, wo eval scale)",

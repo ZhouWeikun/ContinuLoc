@@ -48,4 +48,4 @@ inference_setting:
   hds_score_chunk_size: 32768 #8192*4
   hds_eval_n_samples: null #None=test all queries
   hds_scale_select_mode: log_expectation
-  hds_scale_select_scope: per_anchor
+  hds_scale_select_scope: per_anchor # per_anchor | global_pose_max

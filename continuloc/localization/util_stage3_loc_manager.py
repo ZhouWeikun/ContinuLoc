@@ -360,14 +360,20 @@ class Stage3FineLocManager:
             score_mode="raw_score",
             softmax_temperature=0.02,
             n_scale=None,
+            scale_select_scope="per_anchor",
     ):
         """Score visual query descriptors against a precomputed satellite gallery.
 
         ``raw_score`` preserves the historical ``(2 - L2) / 2`` mapping.
-        ``cosine_softmax`` applies the temperature softmax along scale inside
-        each fixed (position, rotation) anchor.  It preserves that anchor's
-        historical raw-score mass, so this option changes scale decoding
-        without also changing position/rotation ranking.
+        ``cosine_softmax`` uses one of two scale-calibration scopes:
+
+        - ``per_anchor`` applies the temperature softmax along scale inside
+          each fixed (position, rotation) anchor and preserves that anchor's
+          historical raw-score mass.
+        - ``global_pose_max`` first takes the maximum cosine similarity over
+          all (position, rotation) anchors for each scale, applies the
+          temperature softmax to those scale maxima, and returns a joint
+          pose/scale distribution with that exact global scale marginal.
         """
         query_feats = F.normalize(query_feats, dim=-1)
         score_mode = str(score_mode).strip().lower()
@@ -379,6 +385,17 @@ class Stage3FineLocManager:
         softmax_temperature = float(softmax_temperature)
         if score_mode == "cosine_softmax" and softmax_temperature <= 0:
             raise ValueError("visual gallery softmax_temperature must be positive.")
+        scale_select_scope = str(scale_select_scope).strip().lower()
+        if scale_select_scope not in {"per_anchor", "global_pose_max"}:
+            raise ValueError(
+                "visual gallery scale_select_scope must be 'per_anchor' or "
+                f"'global_pose_max', got {scale_select_scope!r}."
+            )
+        if scale_select_scope == "global_pose_max" and score_mode != "cosine_softmax":
+            raise ValueError(
+                "global_pose_max requires visual score_mode='cosine_softmax' "
+                "so the scale marginal is computed from raw cosine maxima."
+            )
         if score_mode == "cosine_softmax":
             if n_scale is None or int(n_scale) <= 0:
                 raise ValueError("n_scale must be positive for cosine_softmax scoring.")
@@ -402,11 +419,38 @@ class Stage3FineLocManager:
         score = torch.cat(score_chunks, dim=-1)
         if score_mode == "cosine_softmax":
             cosine_by_anchor = score.reshape(score.shape[0], -1, n_scale)
-            scale_weights = F.softmax(cosine_by_anchor / softmax_temperature, dim=-1)
             dist_by_anchor = torch.sqrt((2.0 - 2.0 * cosine_by_anchor).clamp(min=0.0))
             raw_by_anchor = (2.0 - dist_by_anchor).clamp(min=0.0) / 2.0
-            anchor_mass = raw_by_anchor.sum(dim=-1, keepdim=True)
-            score = (anchor_mass * scale_weights).reshape(score.shape[0], -1)
+            if scale_select_scope == "global_pose_max":
+                # S(s) = max_{x,y,r} cosine(q, f_sat(x,y,r,s)).
+                scale_max_logits = cosine_by_anchor.amax(dim=1)
+                scale_weights = F.softmax(
+                    scale_max_logits / softmax_temperature,
+                    dim=-1,
+                )
+
+                # Rank pose anchors by their expected visual match under the
+                # query-level scale posterior.  The outer product ensures that
+                # summing the returned volume over all pose anchors recovers
+                # ``scale_weights`` exactly; background anchors do not vote on
+                # the global scale.
+                anchor_scores = torch.sum(
+                    raw_by_anchor * scale_weights.unsqueeze(1),
+                    dim=-1,
+                )
+                anchor_weights = anchor_scores / (
+                    anchor_scores.sum(dim=-1, keepdim=True) + 1e-8
+                )
+                score = (
+                    anchor_weights.unsqueeze(-1) * scale_weights.unsqueeze(1)
+                ).reshape(score.shape[0], -1)
+            else:
+                scale_weights = F.softmax(
+                    cosine_by_anchor / softmax_temperature,
+                    dim=-1,
+                )
+                anchor_mass = raw_by_anchor.sum(dim=-1, keepdim=True)
+                score = (anchor_mass * scale_weights).reshape(score.shape[0], -1)
             if normalize:
                 score = score / (score.sum(dim=-1, keepdim=True) + 1e-8)
             return score
@@ -428,6 +472,7 @@ class Stage3FineLocManager:
         l0_visual_gallery_batch_size=128,
         l0_visual_score_mode="raw_score",
         l0_visual_softmax_temperature=0.02,
+        l0_scale_select_scope="per_anchor",
         save_pred_pdf=False,
         save_tag="prefilter",
         report_title="Spatial Classification Results (wo eval scale)",
@@ -499,6 +544,7 @@ class Stage3FineLocManager:
                         score_mode=l0_visual_score_mode,
                         softmax_temperature=l0_visual_softmax_temperature,
                         n_scale=int(n_coarse[3]),
+                        scale_select_scope=l0_scale_select_scope,
                     )
                 else:
                     possibilities = self.score_candidates(
@@ -571,6 +617,7 @@ class Stage3FineLocManager:
             "l0_gallery_feature_source": l0_prob_mode,
             "l0_visual_score_mode": str(l0_visual_score_mode),
             "l0_visual_softmax_temperature": float(l0_visual_softmax_temperature),
+            "l0_scale_select_scope": str(l0_scale_select_scope),
         }
 
     # ============================================================

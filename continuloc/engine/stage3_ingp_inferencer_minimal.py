@@ -317,18 +317,32 @@ class MinimalStage3INGPInferencer(MinimalStage2INGPTrainer):
         scale_select_scope = str(
             getattr(self.opt, "hds_scale_select_scope", "per_anchor")
         ).strip().lower()
-        if scale_select_scope not in {"per_anchor", "global_query"}:
+        if scale_select_scope not in {"per_anchor", "global_pose_max"}:
             raise ValueError(
-                "hds_scale_select_scope must be 'per_anchor' or 'global_query', "
+                "hds_scale_select_scope must be 'per_anchor' or 'global_pose_max', "
                 f"got {scale_select_scope!r}."
             )
+        gallery_feature_source = str(
+            getattr(self.opt, "hds_stage1_gallery_feature_source")
+        ).strip().lower()
+        if scale_select_scope == "global_pose_max":
+            if gallery_feature_source != "visual_encoder":
+                raise ValueError(
+                    "hds_scale_select_scope='global_pose_max' requires "
+                    "hds_stage1_gallery_feature_source='visual_encoder'."
+                )
+            if visual_score_mode != "cosine_softmax":
+                raise ValueError(
+                    "hds_scale_select_scope='global_pose_max' requires "
+                    "hds_stage1_visual_score_mode='cosine_softmax'."
+                )
         return {
             "eval_n_samples": getattr(self.opt, "hds_eval_n_samples", None),
             "scale_select_mode": str(getattr(self.opt, "hds_scale_select_mode")),
             "scale_select_scope": scale_select_scope,
             "scale_spacing": scale_spacing,
 
-            "ge_prob_mode": str(getattr(self.opt, "hds_stage1_gallery_feature_source")),
+            "ge_prob_mode": gallery_feature_source,
             "ge_visual_gallery_batch_size": int(
                 getattr(self.opt, "hds_stage1_visual_gallery_batch_size")
             ),
