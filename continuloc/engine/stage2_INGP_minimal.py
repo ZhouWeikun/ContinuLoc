@@ -111,6 +111,7 @@ class MinimalStage2INGPTrainer(BaseTrainer):
             "hardware": "hardware_setting",
         }
         data_key_whitelist = {
+            "scale_filter_mode",
             "pad_mode",
             "imgsize2net",
             "satimgsize2crop",

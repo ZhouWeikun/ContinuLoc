@@ -249,6 +249,8 @@ def get_parse(print_summary=True):
 
     # 训练配置
     parser.add_argument('--num_epochs', default=100, type=int, help='训练轮数')
+    parser.add_argument('--scale_filter_mode', default=None, choices=['none', 'percentile', 'mad'],
+                        help='尺度过滤：none 不过滤；percentile 严格 P2/P99；mad 复现 master 通用 MAD 3.5。未配置时兼容旧行为。')
     parser.add_argument('--split_source', default='generated', choices=['generated', 'csv'], help='按比例生成划分，或显式读取 CSV 划分列')
     parser.add_argument('--split_val_ratio', default=0.0, type=float, help='验证集占全部参与划分样本的比例；从原测试集合中划出，默认关闭')
     parser.add_argument('--split_train_ratio', default=0.9, type=float, help='UAV 数据集训练集比例')
@@ -408,6 +410,9 @@ def get_parse(print_summary=True):
             if not hasattr(default_args, section) or getattr(opt, section) == getattr(default_args, section):
                 setattr(opt, section, params)
     
+    if opt.scale_filter_mode is not None and opt.scale_filter_mode not in {"none", "percentile", "mad"}:
+        raise ValueError("scale_filter_mode must be none, percentile, or mad.")
+
     # --- 6. 检查并设置场景配置 (向后兼容) ---
     if not hasattr(opt, 'scenes_setting') or not opt.scenes_setting:
         print("警告：未找到 scenes_setting，将使用命令行参数作为单场景配置")
@@ -517,6 +522,7 @@ def get_parse(print_summary=True):
                         'save_freq', 'val', 'val_freq',
                         'p_satinfo_json', 'p_uavinfo_json', 'p_uav_geocsv'],
         'data_setting': [
+            'scale_filter_mode',
             'pad_mode',
             'imgsize2net',
             'satimgsize2crop',

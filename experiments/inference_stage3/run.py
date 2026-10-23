@@ -59,6 +59,18 @@ def prepare(config):
     os.chdir(ROOT)
     config = copy.deepcopy(config)
     exp = config['exp_setting']
+    inference = config.get('inference_setting', {})
+    if inference.get('hds_scale_select_scope') == 'global_pose_max':
+        if inference.get('hds_stage1_gallery_feature_source') not in {'visual_encoder', 'ingp'}:
+            raise ValueError(
+                "hds_scale_select_scope='global_pose_max' requires "
+                "hds_stage1_gallery_feature_source='visual_encoder' or 'ingp'."
+            )
+        if inference.get('hds_stage1_visual_score_mode') != 'cosine_softmax':
+            raise ValueError(
+                "hds_scale_select_scope='global_pose_max' requires "
+                "hds_stage1_visual_score_mode='cosine_softmax'."
+            )
     for key in ('load_stage2_ckpt', 'inherit_stage2_yaml'):
         if not exp.get(key):
             raise ValueError(f'Fill exp_setting.{key} before running (including dry-run)')
@@ -132,13 +144,15 @@ def execute(config, *, dry_run=False, python=sys.executable):
     try:
         metadata['status'] = 'running'
         save()
-        with (logs / 'console.log').open('w') as log:
+        with (logs / 'console.log').open('w') as log, (output / 'console.log').open('x') as result_log:
             with subprocess.Popen(command, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                   text=True, bufsize=1, env=environment) as process:
                 for line in process.stdout:
                     print(line, end='', flush=True)
                     log.write(line)
                     log.flush()
+                    result_log.write(line)
+                    result_log.flush()
                 code = process.wait()
                 if code:
                     raise subprocess.CalledProcessError(code, command)

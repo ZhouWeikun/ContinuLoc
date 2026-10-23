@@ -65,14 +65,82 @@ experiments:
       grid_mlp_hidden_dim: 1024
       grid_mlp_num_blocks: 2
 
-  # Zuchwil interval尺度采样对照：只改变sat尺度分布，关闭经验采样自带的尺度扰动。
-  - name: stage2_wingtra_intervalT90V0_softtripletAlpha10_zuchwil_scaleSamplingLogUni_woJitter
+  # 本轮四组：interval91 = intervalT90V0（训练90%、测试10%、验证0%）。
+  # uniform_log + 无jitter；none显式关闭尺度过滤，mad启用MAD过滤。
+  # num_epochs是总轮数：续训从epoch499恢复，训练至epoch999。
+  - name: stage2_wingtra_interval91_softtripletAlpha10_zuchwil_scaleSamplingLogUniwoJitter_noFilter_resume499
     base_yaml: experiments/train_stage2/config_wingtra.yaml
     enabled: true
     overrides:
       selected_scene_name: zuchwil
       load_stage1_ckpt: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage1_wingtraS2_intervalT90V0_softtripletAlpha10_4dof/epoch018_zurichR1=80_zuchwilR1=77.pth
       inherit_stage1_yaml: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage1_wingtraS2_intervalT90V0_softtripletAlpha10_4dof/opts.yaml
+      load2train: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage2_wingtra_intervalT90V0_softtripletAlpha10_zuchwil_scaleSamplingLogUni_woJitter/epoch499.pth
+      split_source: generated
+      split_mode: interval
+      split_train_ratio: 0.9
+      split_val_ratio: 0.0
+      scale_filter_mode: none
+      sat_scale_sampling_mode: uniform_log
+      sat_scale_jitter_enabled: false
+      sat_scale_jitter_half_span_ratio: 0.0
+      num_epochs: 1000
+      grid_mlp_hidden_dim: 1024
+      grid_mlp_num_blocks: 2
+
+  - name: stage2_wingtra_interval91_softtripletAlpha10_zurich_scaleSamplingLogUniwoJitter_noFilter
+    base_yaml: experiments/train_stage2/config_wingtra.yaml
+    enabled: true
+    overrides:
+      selected_scene_name: zurich
+      load_stage1_ckpt: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage1_wingtraS2_intervalT90V0_softtripletAlpha10_4dof/epoch018_zurichR1=80_zuchwilR1=77.pth
+      inherit_stage1_yaml: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage1_wingtraS2_intervalT90V0_softtripletAlpha10_4dof/opts.yaml
+      load2train: ''
+      split_source: generated
+      split_mode: interval
+      split_train_ratio: 0.9
+      split_val_ratio: 0.0
+      scale_filter_mode: none
+      sat_scale_sampling_mode: uniform_log
+      sat_scale_jitter_enabled: false
+      sat_scale_jitter_half_span_ratio: 0.0
+      num_epochs: 1000
+      grid_mlp_hidden_dim: 1024
+      grid_mlp_num_blocks: 2
+
+  - name: stage2_wingtra_interval91_softtripletAlpha10_zurich_scaleSamplingLogUniwoJitter_madFilter
+    base_yaml: experiments/train_stage2/config_wingtra.yaml
+    enabled: true
+    overrides:
+      selected_scene_name: zurich
+      load_stage1_ckpt: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage1_wingtraS2_intervalT90V0_softtripletAlpha10_4dof/epoch018_zurichR1=80_zuchwilR1=77.pth
+      inherit_stage1_yaml: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage1_wingtraS2_intervalT90V0_softtripletAlpha10_4dof/opts.yaml
+      load2train: ''
+      split_source: generated
+      split_mode: interval
+      split_train_ratio: 0.9
+      split_val_ratio: 0.0
+      scale_filter_mode: mad
+      sat_scale_sampling_mode: uniform_log
+      sat_scale_jitter_enabled: false
+      sat_scale_jitter_half_span_ratio: 0.0
+      num_epochs: 1000
+      grid_mlp_hidden_dim: 1024
+      grid_mlp_num_blocks: 2
+
+  - name: stage2_wingtra_interval91_softtripletAlpha10_zuchwil_scaleSamplingLogUniwoJitter_madFilter
+    base_yaml: experiments/train_stage2/config_wingtra.yaml
+    enabled: true
+    overrides:
+      selected_scene_name: zuchwil
+      load_stage1_ckpt: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage1_wingtraS2_intervalT90V0_softtripletAlpha10_4dof/epoch018_zurichR1=80_zuchwilR1=77.pth
+      inherit_stage1_yaml: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage1_wingtraS2_intervalT90V0_softtripletAlpha10_4dof/opts.yaml
+      load2train: ''
+      split_source: generated
+      split_mode: interval
+      split_train_ratio: 0.9
+      split_val_ratio: 0.0
+      scale_filter_mode: mad
       sat_scale_sampling_mode: uniform_log
       sat_scale_jitter_enabled: false
       sat_scale_jitter_half_span_ratio: 0.0

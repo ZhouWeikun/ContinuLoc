@@ -243,7 +243,7 @@ def _build_cma_init_seeds(
 
         global_scale_hat = None
         if scale_select_scope == "global_pose_max":
-            # score_visual_gallery constructs a joint distribution whose
+            # score_cosine_gallery constructs a joint distribution whose
             # scale marginal is softmax(max_{x,y,r}(cosine) / temperature).
             scale_probs_global = l0_prob_q_4d.sum(dim=(0, 1, 2))
             scale_vals_global = coords_candidates_4d[0, 0, 0, :, 3].clamp(min=1e-6)
@@ -1029,9 +1029,9 @@ def _test_3d_fine_accuracy_seed_mode_CMA_ES(
                 f"got {scale_select_scope}"
             )
         if scale_select_scope == "global_pose_max":
-            if l0_prob_mode != "visual_encoder":
+            if l0_prob_mode not in {"visual_encoder", "ingp"}:
                 raise ValueError(
-                    "global_pose_max requires l0_prob_mode='visual_encoder'."
+                    "global_pose_max requires l0_prob_mode='visual_encoder' or 'ingp'."
                 )
             if str(l0_visual_score_mode).strip().lower() != "cosine_softmax":
                 raise ValueError(

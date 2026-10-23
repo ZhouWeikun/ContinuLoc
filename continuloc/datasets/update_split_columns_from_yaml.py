@@ -51,6 +51,8 @@ def _load_yaml_config(yaml_path):
         "split_train_ratio": split_train_ratio,
         "split_val_ratio": float(data_setting.get("split_val_ratio", 0.0)),
         "split_mode": split_mode,
+        "scale_filter_mode": data_setting.get("scale_filter_mode"),
+        "enable_scale_filter": data_setting.get("enable_scale_filter", False),
         "imgsize2net": imgsize2net,
         "dataset_name": dataset_name,
         "scenes": scenes,
@@ -102,6 +104,8 @@ def _process_scene(config_info, scene):
             imgsize2net=imgsize2net,
             split_train_ratio=split_train_ratio,
             split_mode=split_mode,
+            scale_filter_mode=config_info.get("scale_filter_mode"),
+            enable_scale_filter=config_info.get("enable_scale_filter", False),
             name=scene_name,
             device="cpu",
         )

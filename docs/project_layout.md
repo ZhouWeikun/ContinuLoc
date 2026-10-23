@@ -5,7 +5,7 @@
   `engine` 训练、推理与运行管理，`localization` 定位搜索与精化，`config` 配置解析。
 - `scripts/`：通用命令入口，不复制训练或数据处理实现。
 - `configs/`：共享配置。数据清单仍保留在外部数据集目录中。
-- `experiments/`：仅存放用户明确指定保留的实验，目前为 `stage3_search_projection/` 、`train_stage1/` 、`train_stage2/` 、`eval_stage1/` 、`refine_after_retrieval/` 、`inference_stage3/` 和 `analyse_stage3/`。
+- `experiments/`：仅存放用户明确指定保留的实验，目前为 `stage3_search_projection/` 、`train_stage1/` 、`train_stage2/` 、`eval_stage1/` 、`refine_after_retrieval/` 、`inference_stage3/` 、`analyse_stage3/` 和 `xmu_stage1/`。
 - `tmep/`：未经用户指定保留的实验、诊断、验证和过程脚本的默认位置；仅在用户明确指定后移入 experiments。旧 `temp/` 内容保留，新工作使用 `tmep/`。
 - `gen_fm_exps/`：统一存放实验结果、评估与诊断输出、预测、数组、表格和可视化图片，按任务或 run_id 建立子目录。后续输出统一使用此命名，不再使用 `results/` 或 `res_from_exps/`。
 - `gen_fm_exps/ckpts/`：存放检查点；`gen_fm_exps/logs/`：存放日志，与实验结果以相同 run_id 关联。

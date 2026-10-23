@@ -326,10 +326,10 @@ class MinimalStage3INGPInferencer(MinimalStage2INGPTrainer):
             getattr(self.opt, "hds_stage1_gallery_feature_source")
         ).strip().lower()
         if scale_select_scope == "global_pose_max":
-            if gallery_feature_source != "visual_encoder":
+            if gallery_feature_source not in {"visual_encoder", "ingp"}:
                 raise ValueError(
                     "hds_scale_select_scope='global_pose_max' requires "
-                    "hds_stage1_gallery_feature_source='visual_encoder'."
+                    "hds_stage1_gallery_feature_source='visual_encoder' or 'ingp'."
                 )
             if visual_score_mode != "cosine_softmax":
                 raise ValueError(

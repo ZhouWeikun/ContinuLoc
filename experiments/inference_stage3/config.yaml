@@ -39,6 +39,10 @@ hardware_setting:
   num_worker: 8
   # 卫星地图留在 CPU 侧，减少预先占用的显存。
   satmaps_on_cpu: true
+data_setting:
+  # Stage 3 显式选择尺度过滤，避免旧 Stage 2 opts.yaml 缺少该字段时产生歧义。
+  # 旧实验保持 none；需要复现 master 的 Zurich/Zuchwil 过滤时在批配置中覆盖为 mad。
+  scale_filter_mode: none
 inference_setting:
   # 阶段 1：粗搜索。空间网格步长约为裁剪图尺寸 × (1 - overlap)；范围 [0, 1)。
   hds_stage1_overlap: 0.0
@@ -57,6 +61,7 @@ inference_setting:
   # visual_encoder gallery 的相似度校准方式。cosine_softmax 直接对归一化特征的
   # cosine similarity 在每个固定(位置,旋转)锚点内沿尺度维使用温度 softmax，
   # 同时保留该锚点原始分数总量，因此只改变尺度解码而不改变位置/旋转锚点排序。
+  # global_pose_max 下这两个校准参数也用于 INGP gallery；per_anchor 的 INGP 仍用原评分。
   # raw_score 保留旧的 (2-L2)/2 映射用于消融。
   hds_stage1_visual_score_mode: cosine_softmax # cosine_softmax | raw_score
   hds_stage1_visual_softmax_temperature: 0.02

@@ -30,6 +30,12 @@ scenes_setting:
       p_uav_geocsv: /home/data/zwk/data_uavimgs_wingtra/Zuchwil/uavimgs_info/uavimgs_geo_corrected_gim_dkm_v1.csv
       weight: 1.0
 data_setting:
+  # interval91：训练/测试 = 9:1，无验证集；batch 中显式覆盖过滤方式。
+  split_source: generated
+  split_mode: interval
+  split_train_ratio: 0.9
+  split_val_ratio: 0.0
+  scale_filter_mode: none
   # Stage 2 sat尺度默认复现历史行为：按有效UAV尺度经验分布采样，再加完整跨度±5%的扰动。
   # 可选采样方式: empirical / uniform_linear / uniform_log。
   sat_scale_sampling_mode: empirical

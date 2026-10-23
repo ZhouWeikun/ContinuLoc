@@ -48,7 +48,7 @@ python experiments/inference_stage3/run.py --config /path/to/config.yaml
   `global_pose_max` 对每个尺度先计算全部位置和旋转中的最大原始 cosine
   `S(s)=max_(x,y,r) cosine(q,f_sat(x,y,r,s))`，再用
   `hds_stage1_visual_softmax_temperature` 做尺度 softmax，为一个 query 解析唯一尺度并固定到
-  全部 Population Contraction 和 CMA 轨迹。该模式要求 Visual Gallery 与
+  全部 Population Contraction 和 CMA 轨迹。该模式支持 Visual Encoder 和 INGP gallery，要求
   `cosine_softmax`，并应关闭后续尺度采样和优化。
 - `hds_stage2_*`：种群收缩轮数、粒子数量、搜索半径、elite 与存活比例。
 - `hds_stage3_*`：CMA 模式数量、种群、迭代与提前停止参数。
@@ -68,3 +68,7 @@ python experiments/inference_stage3/run.py --config /path/to/config.yaml
 构建期 CPU 校验：`python tmep/inference_stage3/check_launcher.py`。
 
 结果目录同时保存 `config.yaml`（提交给推理器的 Stage 3 配置）、`stage2_opts.yaml`、可用时的 `stage1_opts.yaml`、`recall_thresholds.yaml`，以及与日志目录同步更新的 `manifest.json`。manifest 记录实际使用的 Stage 1/2 checkpoint 绝对路径、继承 YAML 原路径、配置快照路径、场景和运行状态。模型权重本身不复制；配置快照在启动推理前保存。`config.yaml` 与继承的 opts 快照共同描述测试配置，Stage 3 显式设置优先。
+
+`global_pose_max` 的 INGP gallery 通过归一化 INGP 特征计算原始 cosine，
+与 Visual Encoder 共用尺度聚合；温度沿用 `hds_stage1_visual_softmax_temperature`。
+`per_anchor` 下 INGP 仍保留原始距离评分，视觉评分配置不改变其行为。

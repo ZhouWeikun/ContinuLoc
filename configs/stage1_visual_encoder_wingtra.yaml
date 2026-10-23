@@ -15,11 +15,15 @@ exp_setting:
 
 # ==================== 数据加载配置 ====================
 data_setting:
+  # none: 仅质量筛选；percentile: P2 < h_cover_m < P99，参考尺度200m；
+  # mad: modified-z <= 3.5，复现 master 中 zurich/zuchwil 实际走的分支。
+  # 先过滤再生成 train/val/test 划分；旧 checkpoint 需使用其原始过滤配置。
+  scale_filter_mode: mad #percentile|mad|null
   pad_mode: "zeros" #"zeros" or
   imgsize2net: 224
   satimgsize2crop: 244   #satimgsize2crop：res02m:zuchwil=540,zurich=614; res03m:zuchwil=400; res05m:zurich=224
   n_global_negatives_per_batch: 384 # 每个 batch 独立生成的全局负样本总数；0 为关闭
-  reject_sampling: False
+  reject_sampling: True
   pair_alignment_mode: full_4d #full_4d / xy_only
   n_rand2sample_per_pos: 256 #16
   sat_as_query: False #sat_as_query数量=batchsize_uav

@@ -228,15 +228,48 @@ def _compute_scale_ref_from_mask(uav_h_cover_m, aff2d_corrected_mask, selected_m
 
 
 def _resolve_sample_selection(df, split_mode, train_ratio, geo_res_m, dataset_name,
-                              scale_ref_m=None, enable_scale_filter=False, split_source="generated"):
+                              scale_ref_m=None, enable_scale_filter=False, split_source="generated",
+                              scale_filter_mode=None):
     """Quality -> scale diagnostics -> optional legacy rejection -> split selection."""
     if not isinstance(enable_scale_filter, (bool, np.bool_)):
         raise ValueError("enable_scale_filter must be a boolean.")
+    if scale_filter_mode is not None and scale_filter_mode not in {"none", "percentile", "mad"}:
+        raise ValueError("scale_filter_mode must be none, percentile, or mad.")
     heights = np.asarray(df['h_cover_m'], dtype=float)
-    corrected = _series_to_bool_numpy(df['aff2d_corrected'])
+    corrected_raw = _series_to_bool_numpy(df['aff2d_corrected'])
+    if 'manual_filter_reason' in df.columns:
+        manual_reason = df['manual_filter_reason'].fillna('').astype(str).str.strip()
+        manual_filter_mask = manual_reason.ne('').to_numpy(dtype=bool)
+    else:
+        manual_filter_mask = np.zeros(len(df), dtype=bool)
+    # A recorded manual rejection is authoritative even if aff2d_corrected was
+    # not updated in the same CSV edit.
+    corrected = corrected_raw & ~manual_filter_mask
     diagnostics = _check_scale_values(heights, corrected)
     valid_mask = corrected.copy()
-    if enable_scale_filter:
+    if scale_filter_mode in {"percentile", "mad"}:
+        source = heights[corrected]
+        if scale_filter_mode == "percentile":
+            # Historical Wingtra branch: strict P2/P99, fixed 200 m reference.
+            lower, upper = np.percentile(source, [2, 99])
+            valid_mask &= (heights > lower) & (heights < upper)
+            scale_ref_m = 200.0
+        else:
+            # master generic branch used by scene names zurich/zuchwil.
+            # Compute reference BEFORE rejection, preserving historical normalization.
+            scale_ref_m = _compute_scale_ref_from_mask(heights, corrected, corrected, scale_ref_m)
+            normalized = source / scale_ref_m
+            median = float(np.median(normalized))
+            mad = float(np.median(np.abs(normalized - median)))
+            values = heights / scale_ref_m
+            if mad <= np.finfo(np.float64).eps:
+                valid_mask &= np.isclose(values, median, rtol=1e-6, atol=1e-8)
+            else:
+                lower, upper = get_valid_range_mad(normalized)
+                # Keep observed endpoints, as master does.
+                values = (heights / geo_res_m) * geo_res_m / scale_ref_m
+                valid_mask &= (values >= lower) & (values <= upper)
+    elif scale_filter_mode is None and enable_scale_filter:
         if diagnostics["mad"] == 0 and "wingtra" not in str(dataset_name).lower():
             raise ValueError("Legacy scale filtering is undefined for zero MAD; disable it.")
         legacy = _compute_legacy_scale_mask(
@@ -272,6 +305,7 @@ def _resolve_sample_selection(df, split_mode, train_ratio, geo_res_m, dataset_na
         "selected_mask": selected_mask,
         "scale_ref_m": reference,
         "diagnostics": diagnostics,
+        "manual_filter_mask": manual_filter_mask,
         "split_info": split_info,
     }
 
@@ -400,6 +434,7 @@ class SatDataset(object):
                  name=None,
                  pad_mode=None,
                  enable_scale_filter=False,
+                 scale_filter_mode=None,
                  sat_scale_sampling_mode='empirical',
                  sat_scale_jitter_enabled=True,
                  sat_scale_jitter_half_span_ratio=0.05,
@@ -458,10 +493,11 @@ class SatDataset(object):
         self.split_mode = str(split_mode).strip().lower()
         df = pd.read_csv(p_uav_geocsv)
         self.enable_scale_filter = enable_scale_filter
+        self.scale_filter_mode = scale_filter_mode
         selection = _resolve_sample_selection(
             df, self.split_mode, self.split_train_ratio, self.geo_res_m, self.name,
             scale_ref_m=scale_ref_m, enable_scale_filter=self.enable_scale_filter,
-            split_source=split_source)
+            split_source=split_source, scale_filter_mode=self.scale_filter_mode)
         split_info = selection["split_info"]
         self.has_split_column = bool(split_info["has_split_column"])
         self.active_split_column = split_info["column_name"]
@@ -469,12 +505,16 @@ class SatDataset(object):
         self.valid_mask = selection["valid_mask"]
         self.selected_mask = selection["selected_mask"]
         self.scale_diagnostics = selection["diagnostics"]
+        self.manual_filter_mask = selection["manual_filter_mask"]
         self.scale_ref_m = selection["scale_ref_m"]
         scale_mask = self.selected_mask
         uav_h_cover_m = np.asarray(df['h_cover_m'], dtype=float)
         print(f"[{self.name}] SatDataset selected={int(scale_mask.sum())}, "
+              f"manual exclusions={int(self.manual_filter_mask.sum())}, "
               f"MAD outliers={int(self.scale_diagnostics['mad_outlier_mask'].sum())}, "
-              f"scale rejection={self.enable_scale_filter}, split={self.split_source}.")
+              f"scale filter={self.scale_filter_mode or ('legacy' if self.enable_scale_filter else 'none')}, "
+              f"range=[{uav_h_cover_m[scale_mask].min():.6f}, {uav_h_cover_m[scale_mask].max():.6f}] m, "
+              f"reference={self.scale_ref_m:.1f} m, split={self.split_source}.")
 
         # config the satimgsize2crop
         self.satimgsize_correspond2uav_list = uav_h_cover_m[scale_mask] / self.geo_res_m
@@ -1144,6 +1184,7 @@ class UAVDataset(object):
                  split_val_ratio=0.0,
                  split_source=None,
                  enable_scale_filter=None,
+                 scale_filter_mode=None,
                  query_geometry_method="pipelined",
                  query_prefilter_resolution_factor=2.0,
                  uavimgs_dir=None,
@@ -1169,6 +1210,10 @@ class UAVDataset(object):
         self.uav_df = df
         if sat_dataset is not None:
             self.geo_res_m = sat_dataset.geo_res_m
+            inherited_mode = sat_dataset.scale_filter_mode
+            if scale_filter_mode is not None and scale_filter_mode != inherited_mode:
+                raise ValueError("SatDataset and UAVDataset must use the same scale_filter_mode.")
+            scale_filter_mode = inherited_mode
             inherited_filter = sat_dataset.enable_scale_filter
             if enable_scale_filter is not None and enable_scale_filter != inherited_filter:
                 raise ValueError("SatDataset and UAVDataset must use the same enable_scale_filter.")
@@ -1177,12 +1222,13 @@ class UAVDataset(object):
                 raise ValueError("SatDataset and UAVDataset must use the same scale_ref_m.")
             scale_ref_m = sat_dataset.scale_ref_m
         self.enable_scale_filter = False if enable_scale_filter is None else enable_scale_filter
+        self.scale_filter_mode = scale_filter_mode
         if split_source is None:
             split_source = ("csv" if sat_dataset is not None and sat_dataset.has_split_column else "generated")
         selection = _resolve_sample_selection(
             df, self.split_mode, self.split_train_ratio, getattr(self, 'geo_res_m', 1.0), self.name,
             scale_ref_m=scale_ref_m, enable_scale_filter=self.enable_scale_filter,
-            split_source=split_source)
+            split_source=split_source, scale_filter_mode=self.scale_filter_mode)
         split_info = selection["split_info"]
         self.has_split_column = bool(split_info["has_split_column"])
         self.active_split_column = split_info["column_name"]

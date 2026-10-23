@@ -1,0 +1,14 @@
+# Best VisLoc xy_only checkpoint by pooled validation+test Recall@1; see selection_2dof_best/selection.json.
+checkpoint: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage1_vislocS9_segmentT80V5_softtripletAlpha20_2dof/epoch012.pth
+data_root: /home/data/zwk/data_uavimgs_XianganXmu_512h_lineClassed
+output_root: gen_fm_exps/xmu_xy/2dof_best
+crop_m: 80.0
+stride_m: 20.0
+batch_size: 1024
+max_queries: 0
+gpu_id: '0'
+rotation_mode: none # 原始朝向直接编码，不转正、不搜索方向
+rotation_step_deg: 10.0
+max_forward_variants: 64
+rot_retrieval_mode: rot_argmax
+heading_temperature: 0.02

@@ -26,6 +26,23 @@ python experiments/train_stage1/run.py \
 不传 `--p_yaml` 时默认使用 VisLoc 配置。传 `--test_only` 仅执行测试，
 测试检查点由配置的 `load2test` 指定。`--exp_name_override` 可以覆盖实验名称。
 
+Wingtra 的 `data_setting.scale_filter_mode` 显式控制尺度过滤，两个场景使用同一选项：
+
+| 值 | 过滤方式 | 归一化参考尺度 |
+|---|---|---|
+| `none` | 仅保留质量有效样本，不按尺度剔除 | 选中样本均值向上取到下一个 10 m |
+| `percentile` | 质量有效样本中严格保留 P2～P99 | 固定 200 m，复现旧 Wingtra 分支 |
+| `mad`（当前 Wingtra 默认） | modified-z ≤ 3.5，含保留区间端点；MAD 为零时保留近似中位数的样本 | 过滤前质量有效样本均值向上取到下一个 10 m |
+
+`mad` 复现 master 的 `zurich` / `zuchwil` 场景实际进入的通用过滤分支，
+不再依赖场景名是否含 `wingtra`。先进行尺度过滤与空间边界过滤，再生成划分。
+显式 `split_source: csv` 若选中了被过滤的行会报错，不会静默修改 CSV。
+模式随 opts.yaml 保存，并随 Stage 1 → Stage 2 → Stage 3 的 data 继承传递；
+未配置新选项的旧 YAML 继续保持原行为，显式新选项优先于旧 `enable_scale_filter`。
+复用此次未过滤训练的旧权重做评估时应使用其原配置（`none`），
+切换 MAD 会改变样本与划分。恢复过滤口径不保证与 master 历史结果完全相同，
+还需保持原始 CSV、划分、训练配置和权重一致。
+
 共享配置继续保留在 `configs/`，避免后续阶段引用路径变化。
 日志、检查点位置遵循 YAML 中的设置。旧 `trainers/stage1_visual_encoder_minimal.py`
 入口继续转发到这里；原 `scripts/train_stage1.py` 已移动，不再作为启动入口。

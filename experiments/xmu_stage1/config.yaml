@@ -1,0 +1,21 @@
+# 已跑基线，不代表最佳权重；后续替换为按指定汇总指标选出的 checkpoint。
+checkpoint: /home/data/zwk/pyproj_neuloc_v0/gen_fm_exps/ckpts/stage1_vislocS9_segmentT80V0_softtripletAlpha10_4dof/epoch015_visloc03R1=93.377_visloc04R1=89.041.pth
+data_root: /home/data/zwk/data_uavimgs_XianganXmu_512h_lineClassed
+output_root: gen_fm_exps/xmu_xy
+# 固定卫星裁剪边长和网格间距（米）；不是 UAV 真实覆盖尺度。
+crop_m: 80.0
+stride_m: 20.0
+batch_size: 1024
+max_queries: 0 # 0 表示全部查询；正数只取前 N 张，用于快速检查。
+gpu_id: '0'
+# search: 未知方向，在 0,10,...,350 度上搜索；metadata: 使用记录方向转正（旧基线）。
+rotation_mode: search
+rotation_step_deg: 10.0
+# 控制每次前向的旋转图像数，独立于读取 query 的 batch_size。
+max_forward_variants: 64
+# rot_weighting_argmax: 先聚合 rot 响应选 TopN xy，再在各 xy 取 argmax 方向。
+# rot_sum_argmax: 直接沿 rot 求和 cosine，选 TopN xy，再取各 xy 的 argmax 方向；忽略温度。
+# rot_xy_argmax: 展平 rot×xy 取 TopN 联合候选，允许重复 xy。
+# rot_argmax: 旧模式，每个 xy 取最大 cosine 后再选 TopN xy。
+rot_retrieval_mode: rot_weighting_argmax
+heading_temperature: 0.02 # 仅 rot_weighting_argmax 生效，控制方向响应聚合。

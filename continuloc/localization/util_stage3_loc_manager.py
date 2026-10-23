@@ -1,3 +1,4 @@
+import math
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -352,6 +353,53 @@ class Stage3FineLocManager:
                 features.append(F.normalize(feats_chunk, dim=-1).cpu())
         return torch.cat(features, dim=0)
 
+    def score_cosine_gallery(self, score, n_scale, softmax_temperature,
+                             scale_select_scope="global_pose_max", normalize=True):
+        """Calibrate raw cosine scores identically for visual and INGP galleries."""
+        if n_scale is None or int(n_scale) <= 0 or score.shape[-1] % int(n_scale):
+            raise ValueError("Candidate count must be divisible by positive n_scale.")
+        if not math.isfinite(float(softmax_temperature)) or softmax_temperature <= 0:
+            raise ValueError("softmax_temperature must be finite and positive.")
+        if scale_select_scope not in {"per_anchor", "global_pose_max"}:
+            raise ValueError(f"Unknown scale_select_scope: {scale_select_scope}")
+        n_scale = int(n_scale)
+        cosine_by_anchor = score.reshape(score.shape[0], -1, n_scale)
+        dist_by_anchor = torch.sqrt((2.0 - 2.0 * cosine_by_anchor).clamp(min=0.0))
+        raw_by_anchor = (2.0 - dist_by_anchor).clamp(min=0.0) / 2.0
+        if scale_select_scope == "global_pose_max":
+            # S(s) = max_{x,y,r} cosine(q, f_source(x,y,r,s)).
+            scale_max_logits = cosine_by_anchor.amax(dim=1)
+            scale_weights = F.softmax(
+                scale_max_logits / softmax_temperature,
+                dim=-1,
+            )
+
+            # Rank pose anchors by their expected gallery match under the
+            # query-level scale posterior.  The outer product ensures that
+            # summing the returned volume over all pose anchors recovers
+            # ``scale_weights`` exactly; background anchors do not vote on
+            # the global scale.
+            anchor_scores = torch.sum(
+                raw_by_anchor * scale_weights.unsqueeze(1),
+                dim=-1,
+            )
+            anchor_weights = anchor_scores / (
+                anchor_scores.sum(dim=-1, keepdim=True) + 1e-8
+            )
+            score = (
+                anchor_weights.unsqueeze(-1) * scale_weights.unsqueeze(1)
+            ).reshape(score.shape[0], -1)
+        else:
+            scale_weights = F.softmax(
+                cosine_by_anchor / softmax_temperature,
+                dim=-1,
+            )
+            anchor_mass = raw_by_anchor.sum(dim=-1, keepdim=True)
+            score = (anchor_mass * scale_weights).reshape(score.shape[0], -1)
+        if normalize:
+            score = score / (score.sum(dim=-1, keepdim=True) + 1e-8)
+        return score
+
     def score_visual_gallery(
             self,
             query_feats,
@@ -418,42 +466,9 @@ class Stage3FineLocManager:
                 score_chunks.append((2.0 - dist).clamp(min=0.0) / 2.0)
         score = torch.cat(score_chunks, dim=-1)
         if score_mode == "cosine_softmax":
-            cosine_by_anchor = score.reshape(score.shape[0], -1, n_scale)
-            dist_by_anchor = torch.sqrt((2.0 - 2.0 * cosine_by_anchor).clamp(min=0.0))
-            raw_by_anchor = (2.0 - dist_by_anchor).clamp(min=0.0) / 2.0
-            if scale_select_scope == "global_pose_max":
-                # S(s) = max_{x,y,r} cosine(q, f_sat(x,y,r,s)).
-                scale_max_logits = cosine_by_anchor.amax(dim=1)
-                scale_weights = F.softmax(
-                    scale_max_logits / softmax_temperature,
-                    dim=-1,
-                )
-
-                # Rank pose anchors by their expected visual match under the
-                # query-level scale posterior.  The outer product ensures that
-                # summing the returned volume over all pose anchors recovers
-                # ``scale_weights`` exactly; background anchors do not vote on
-                # the global scale.
-                anchor_scores = torch.sum(
-                    raw_by_anchor * scale_weights.unsqueeze(1),
-                    dim=-1,
-                )
-                anchor_weights = anchor_scores / (
-                    anchor_scores.sum(dim=-1, keepdim=True) + 1e-8
-                )
-                score = (
-                    anchor_weights.unsqueeze(-1) * scale_weights.unsqueeze(1)
-                ).reshape(score.shape[0], -1)
-            else:
-                scale_weights = F.softmax(
-                    cosine_by_anchor / softmax_temperature,
-                    dim=-1,
-                )
-                anchor_mass = raw_by_anchor.sum(dim=-1, keepdim=True)
-                score = (anchor_mass * scale_weights).reshape(score.shape[0], -1)
-            if normalize:
-                score = score / (score.sum(dim=-1, keepdim=True) + 1e-8)
-            return score
+            return self.score_cosine_gallery(
+                score, n_scale, softmax_temperature, scale_select_scope, normalize
+            )
         if normalize:
             score = score / (score.sum(dim=-1, keepdim=True) + 1e-8)
         return score
@@ -545,6 +560,15 @@ class Stage3FineLocManager:
                         softmax_temperature=l0_visual_softmax_temperature,
                         n_scale=int(n_coarse[3]),
                         scale_select_scope=l0_scale_select_scope,
+                    )
+                elif l0_prob_mode == "ingp" and l0_scale_select_scope == "global_pose_max":
+                    cosine = self.trainer._compute_metric_from_ingp(
+                        feats_vis, coords_candidates_flat, coord_space="raw",
+                        chunk_size=self.chunk_size, metric="sim",
+                    )
+                    possibilities = self.score_cosine_gallery(
+                        cosine, int(n_coarse[3]), l0_visual_softmax_temperature,
+                        scale_select_scope=l0_scale_select_scope, normalize=True,
                     )
                 else:
                     possibilities = self.score_candidates(
