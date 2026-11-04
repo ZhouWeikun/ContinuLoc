@@ -1,61 +1,15 @@
-# Continuloc Minimal V1 File Set
-<p align="center">
-  <img src="./ContinuLoc.png" width="200">
-</p>
+# Continuloc V2 shared file set
 
-This branch keeps the smallest complete code path for the three-stage INGP
-pipeline. The anchor entrypoints are:
+The public branch retains three experiment directories:
 
-- `experiments/train_stage1/run.py`
-- `scripts/train_stage2.py`
-- `scripts/localize_stage3.py`
+- `experiments/train_stage1/`: representation training and evaluation.
+- `experiments/train_stage2/`: semantic neural-field training and evaluation.
+- `experiments/inference_stage3/`: continuous pose inference.
 
-## Commands
+Shared code, configuration, command adapters, regression tests, and compatibility
+entrypoints remain in `continuloc/`, `configs/`, `scripts/`, `tests/`, `trainers/`,
+and `trainer_depends/`. These directories are not an assertion that every file is
+needed by every workflow or that all dependencies are packaged.
 
-Stage 1 train/test:
-
-```bash
-python experiments/train_stage1/run.py \
-  --p_yaml configs/stage1_visual_encoder_wingtra.yaml
-```
-
-Stage 2 train/test:
-
-```bash
-python scripts/train_stage2.py \
-  --p_yaml configs/stage2_INGP_wingtra.yaml
-```
-
-Stage 3 INGP inference:
-
-```bash
-python scripts/localize_stage3.py \
-  --stage3_yaml configs/stage3_ingp_minimal.yaml \
-  --stage2_opts_yaml <path-to-stage2-opts.yaml>
-```
-
-Use the matching `*_visloc.yaml` files for the VisLoc profile.
-
-## Kept Surface
-
-- Visual backbone: DINOv2 and DINOv3 only.
-- Aggregator: SALAD residual only.
-- Stage 2 field: INGP hash grid plus residual conditional grid MLP.
-- Stage 3: seed-mode coarse search, mode packing, CMA refinement, and
-  progressive Recall@K reporting.
-- Configs: Wingtra and VisLoc profiles, stage3 recall thresholds, and the two
-  hash-grid configs used by those profiles.
-
-## Removed Surface
-
-The branch intentionally removes legacy trainers, ANCE/gallery-bank helpers,
-APR/MetricNet/proxy Stage3 paths, retrieval-then-matching scripts, batch
-analysis/export/visualization scripts, non-main model options, IDE metadata,
-and Python cache artifacts.
-
-## External Inputs
-
-Dataset JSON/CSV paths, pretrained DINO weights, Kaolin Wisp, and trained
-Stage1/Stage2 checkpoints remain external to this repository. The YAML files
-record the expected path shape, and command-line overrides should be used when
-running on another machine.
+See [README](README.md) for commands and
+[publication notes](docs/public_release.md) for the audit scope and remaining work.

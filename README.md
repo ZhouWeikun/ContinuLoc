@@ -5,6 +5,10 @@
 
 Continuous Pose Inference over Neural Fields for UAV Geo-Localization.
 
+This `continuloc_v2_shared` branch retains the `train_stage1`, `train_stage2`, and
+`inference_stage3` experiments. See [publication notes](docs/public_release.md)
+for external dependencies, configuration portability, and Git history scope.
+
 ContinuLoc formulates cross-view UAV geo-localization as continuous 4DoF pose inference over an observation-scene fitness landscape. The system has three main components aligned with the paper:
 
 - **Landscape-Aware Representation Learning** learns 4DoF pose-sensitive UAV and reference descriptors.

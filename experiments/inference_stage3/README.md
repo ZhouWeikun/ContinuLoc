@@ -65,7 +65,7 @@ python experiments/inference_stage3/run.py --config /path/to/config.yaml
 - `gen_fm_exps/logs/stage3_batch/<timestamp>/summary.json`：逐组状态、指标、路径及进程总耗时；模型搜索耗时见各组 `timing.json`。
 
 自动输出路径包含时间戳。显式设置 `stage3_analysis_export_root` 时要求目录尚不存在，避免覆盖历史结果。
-构建期 CPU 校验：`python tmep/inference_stage3/check_launcher.py`。
+开发期 CPU 校验位于开发工作区的 `tmep/inference_stage3/check_launcher.py`，不随公开分支分发。
 
 结果目录同时保存 `config.yaml`（提交给推理器的 Stage 3 配置）、`stage2_opts.yaml`、可用时的 `stage1_opts.yaml`、`recall_thresholds.yaml`，以及与日志目录同步更新的 `manifest.json`。manifest 记录实际使用的 Stage 1/2 checkpoint 绝对路径、继承 YAML 原路径、配置快照路径、场景和运行状态。模型权重本身不复制；配置快照在启动推理前保存。`config.yaml` 与继承的 opts 快照共同描述测试配置，Stage 3 显式设置优先。
 

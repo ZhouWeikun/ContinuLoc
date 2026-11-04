@@ -1,8 +1,0 @@
-# Example thresholds; choose values suitable for the dataset before reporting.
-k_values: [1, 5, 10, 20, 50]
-stages:
-  - {name: baseline, coords_key: coords_topk_baseline}
-  - {name: rerank, coords_key: coords_topk_reranked}
-  - {name: refine, coords_key: coords_topk_refined}
-configs:
-  - {id: example_25m_10deg, label: '25m / 10deg / 1.1x', dist_th_meter: 25, rot_th_deg: 10, scale_ratio_th: 1.1}

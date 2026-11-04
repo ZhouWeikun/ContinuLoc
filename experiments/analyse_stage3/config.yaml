@@ -1,8 +1,0 @@
-# 相对路径以项目根目录为基准。
-# 读取该目录内的预测、报告、config.yaml、stage2_opts.yaml 来确定场景和阈值。
-run: gen_fm_exps/inference_stage3/stage3_wingtra_intervalT90V0_softtripletAlpha10_zuchwil_ep999_20261019T034406528867Z
-output: gen_fm_exps/analyse_stage3/zuchwil_interval_scale4_m8
-
-# 卫星元数据 filepaths 中的索引；本场景 0 对应 SWISSIMAGE2018。
-satellite_index: 0
-font_path: /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
