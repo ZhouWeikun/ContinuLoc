@@ -1,4 +1,4 @@
-## ContinuLoc: Continuous Pose Inference over Neural Fields for UAV Geo-Localization [NIPS 2026]
+## ContinuLoc: Continuous Pose Inference over Neural Fields for UAV Geo-Localization
 
 <p align="center">
   <img src="./assets/images/ContinuLoc.png" alt="ContinuLoc">
