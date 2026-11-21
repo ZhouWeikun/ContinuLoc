@@ -169,13 +169,6 @@ Training uses shared ContinuScenes configurations and selects scenes by name. Ea
   <br><em>Zurich scene.</em>
 </p>
 
-## Code organization
-
-- `continuloc/`: models, data loading, training, and pose inference.
-- `continuloc/cli/`: public command-line entrypoints.
-- `configs/`: shared example configurations.
-- `experiments/`: the three paper components and their launchers.
-
 ## Citation
 
 If you use this code or the pretrained models in your research, please cite the [ContinuLoc paper](https://neurips.cc/virtual/2026/poster/149317).
