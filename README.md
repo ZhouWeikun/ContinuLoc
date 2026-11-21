@@ -1,10 +1,8 @@
-# ContinuLoc
+## ContinuLoc: Continuous Pose Inference over Neural Fields for UAV Geo-Localization [NIPS 2026]
 
 <p align="center">
   <img src="./assets/images/ContinuLoc.png" alt="ContinuLoc">
 </p>
-
-**Continuous Pose Inference over Neural Fields for UAV Geo-Localization**
 
 ContinuLoc estimates a UAV image's continuous 4DoF pose by searching a query–map compatibility landscape. This repository provides training and inference code for the three components in Sections 4.2–4.4 of the paper.
 
@@ -177,8 +175,6 @@ Training uses shared ContinuScenes configurations and selects scenes by name. Ea
 - `continuloc/cli/`: public command-line entrypoints.
 - `configs/`: shared example configurations.
 - `experiments/`: the three paper components and their launchers.
-- `scripts/`: data preparation and maintenance utilities.
-- `gen_fm_exps/`: generated results, logs, and checkpoints.
 
 ## Citation
 
