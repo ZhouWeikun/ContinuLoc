@@ -1,13 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""
-配置解析模块
-
-提供统一的配置解析功能，支持：
-- 命令行参数
-- YAML配置文件
-- 多场景配置
-"""
+"""Unified configuration parsing for command-line arguments, YAML files, and multiple scenes."""
 
 import argparse
 import yaml
@@ -17,8 +10,19 @@ import json
 from pathlib import Path
 
 
+def _parse_boolean(value):
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in {"true", "1", "yes", "y", "on"}:
+        return True
+    if normalized in {"false", "0", "no", "n", "off"}:
+        return False
+    raise argparse.ArgumentTypeError("Expected true or false.")
+
+
 def print_config_summary(opt, header="最终配置:"):
-    """打印当前opt中的配置摘要。"""
+    """Print a summary of the current options."""
     scenes_setting = getattr(opt, 'scenes_setting', None)
     if isinstance(scenes_setting, dict):
         scenes = scenes_setting.get('scenes', [])
@@ -42,12 +46,40 @@ def print_config_summary(opt, header="最终配置:"):
     opt._config_summary_printed = True
 
 
-def _expand_manifest_scenes(settings):
-    """Resolve dataset paths against the manifest, preserving selection order."""
+def _resolve_manifest_location(settings):
+    """Accept a directory, the explicit file key, and the legacy file alias."""
+    directory = settings.get('manifest_dir')
+    directory = Path(directory).expanduser().resolve() if directory else None
+    explicit = []
+    for key in ('p_dataset_manifest', 'dataset_manifest'):
+        if settings.get(key):
+            path = Path(settings[key]).expanduser()
+            explicit.append((key, ((directory / path) if directory else path).resolve()))
+    if len({path for _, path in explicit}) > 1:
+        raise ValueError('p_dataset_manifest and dataset_manifest refer to different files')
+    if explicit:
+        manifest_path = explicit[0][1]
+        if directory is not None and manifest_path.parent != directory:
+            raise ValueError('manifest_dir must be the parent of the explicit dataset manifest')
+    elif directory is not None:
+        manifest_path = directory / 'dataset_manifest.json'
+    else:
+        raise ValueError('Specify manifest_dir, p_dataset_manifest, or dataset_manifest')
+    return manifest_path
+
+
+def _expand_manifest_scenes(settings, require_splits=False):
+    """Resolve schema-v2 scenes and discover per-scene JSONs under manifest_dir/splits."""
     expanded = copy.deepcopy(settings)
-    manifest_path = Path(settings['dataset_manifest']).expanduser().resolve()
+    manifest_path = _resolve_manifest_location(settings)
+    split_dir = (manifest_path.parent / Path(settings.get('split_dir') or 'splits').expanduser()).resolve()
+    strict_splits = require_splits or bool(settings.get('split_dir'))
     with manifest_path.open(encoding='utf-8') as stream:
         manifest = json.load(stream)
+    schema = manifest.get('schema_version')
+    if schema != 2:
+        raise ValueError(f'Unsupported manifest schema_version: {schema}')
+    root_keys = ('visloc_dir', 'wingta_dir')
     registry = manifest['scene_registry']
     dataset = manifest['dataset_name']
     if settings.get('dataset_name', dataset) != dataset:
@@ -64,14 +96,17 @@ def _expand_manifest_scenes(settings):
     names, scenes = [], []
     def resolve_path(value, directory=False):
         path = Path(value).expanduser()
-        path = (manifest_path.parent / path).resolve()
+        if path.is_absolute() or '..' in path.parts:
+            raise ValueError(f'Scene {name}: expected a path relative to {root_key}: {value!r}')
+        path = (scene_root / path).resolve()
         if not (path.is_dir() if directory else path.is_file()):
             raise FileNotFoundError(f"Manifest path does not exist: {path}")
         return str(path)
     for item in requested:
         name = str(item).strip()
         if name.isdigit():
-            name = f"{dataset}_{int(name):02d}"
+            prefix = "visloc" if f"visloc_{int(name):02d}" in registry else dataset
+            name = f"{prefix}_{int(name):02d}"
         if name not in registry:
             raise ValueError(f"Unknown scene {item!r}; available: {', '.join(registry)}")
         if name in names:
@@ -80,6 +115,14 @@ def _expand_manifest_scenes(settings):
         if scene.get('status') != 'prepared':
             raise ValueError(f"Scene {name} is not prepared")
         scene['name'] = name
+        root_key = scene.get('dataset_root')
+        if root_key not in root_keys:
+            raise ValueError(f'Scene {name}: dataset_root must be one of {root_keys}')
+        root_value = settings.get(root_key, manifest.get(root_key))
+        if not isinstance(root_value, str) or not root_value.strip():
+            raise ValueError(f'Scene {name}: missing dataset root {root_key}')
+        root_path = Path(root_value).expanduser()
+        scene_root = (manifest_path.parent / root_path).resolve()
         for key in ('p_satinfo_json', 'p_uavinfo_json', 'p_uav_geocsv'):
             scene[key] = resolve_path(scene[key])
         if scene.get('global_negative_sampling_grid') is not None:
@@ -91,9 +134,15 @@ def _expand_manifest_scenes(settings):
         if not scene.get('satellite_filepaths'):
             raise ValueError(f"Scene {name} has no satellite_filepaths")
         scene['satellite_filepaths'] = [resolve_path(v) for v in scene['satellite_filepaths']]
+        split_path = split_dir / f'{name}.json'
+        if strict_splits and not split_path.is_file():
+            raise FileNotFoundError(f'Fixed split does not exist: {split_path}')
+        if split_path.is_file():
+            scene['p_split_json'] = str(split_path)
         names.append(name)
         scenes.append(scene)
-    expanded.update(dataset_name=dataset, dataset_manifest=str(manifest_path), scenes=scenes)
+    expanded.update(dataset_name=dataset, manifest_dir=str(manifest_path.parent),
+                    p_dataset_manifest=str(manifest_path), dataset_manifest=str(manifest_path), scenes=scenes)
     if single is not None:
         expanded['selected_scene_name'] = names[0]
     else:
@@ -101,15 +150,15 @@ def _expand_manifest_scenes(settings):
     return expanded
 
 
-def _expand_selected_scene_config(scenes_setting):
+def _expand_selected_scene_config(scenes_setting, require_splits=False):
     if not isinstance(scenes_setting, dict):
         return scenes_setting
 
-    if scenes_setting.get('dataset_manifest'):
-        return _expand_manifest_scenes(scenes_setting)
+    if any(scenes_setting.get(key) for key in ('manifest_dir', 'p_dataset_manifest', 'dataset_manifest')):
+        return _expand_manifest_scenes(scenes_setting, require_splits=require_splits)
 
     if scenes_setting.get('selected_scene_names') is not None:
-        raise ValueError('selected_scene_names requires dataset_manifest')
+        raise ValueError('selected_scene_names requires manifest_dir or a dataset manifest file')
 
     scene_registry = scenes_setting.get('scene_registry', None)
     if not isinstance(scene_registry, dict) or not scene_registry:
@@ -142,34 +191,33 @@ def _expand_selected_scene_config(scenes_setting):
 
 
 def get_parse(print_summary=True):
-    """
-    解析命令行参数和YAML配置
-    优先级：命令行参数 > 实验日志YAML > 基础配置YAML > 默认参数
-    """
+    """Parse CLI arguments and YAML configuration.
+
+    Precedence: CLI arguments > saved run YAML > base YAML > defaults."""
     parser = argparse.ArgumentParser(description='Training')
 
-    # ==================== 核心配置 ====================
+    # ==================== Core configuration ====================
     parser.add_argument('--p_yaml',
-                        default='configs/stage1_visual_encoder.yaml',
+                        default='configs/visual_encoder_continuscenes.yaml',
                         type=str, help='YAML配置文件路径 (通常指向opts.yaml或基础配置)')
 
-    # 实验配置
+    # Experiment settings
     parser.add_argument('--dir2save_log', default='gen_fm_exps/logs', type=str, help='日志与TensorBoard保存根目录')
     parser.add_argument('--dir2save_ckpt', default='gen_fm_exps/ckpts', type=str, help='Checkpoint保存根目录')
     parser.add_argument('--exps_dir', default=None, type=str, help=argparse.SUPPRESS)
     parser.add_argument('--exp_name', default='debug', type=str, help='实验名称')
     parser.add_argument('--tensorboard', action='store_true', default=True, help='是否使用tensorboard')
 
-    # Checkpoint配置 (支持字典或字符串，YAML中会覆盖)
+    # Checkpoint settings (dictionary or string; overridden by YAML)
     parser.add_argument('--load2test', default="", type=str, help='测试时加载的checkpoint')
     parser.add_argument('--load2train', default="", type=str, help='继续训练时加载的checkpoint')
 
-    # Stage checkpoint配置（用于多阶段训练）
+    # Stage checkpoints for multi-stage training
     parser.add_argument('--load_stage1_ckpt', default="", type=str, help='Stage 1的checkpoint路径')
     parser.add_argument('--load_stage2_ckpt', default="", type=str, help='Stage 2的checkpoint路径')
     parser.add_argument('--stage3_analysis_export_root', default="", type=str, help='Stage 3测试分析结果导出目录')
     parser.add_argument('--stage3_recall_cfg', default="per_scene", type=str, help='Stage 3 recall阈值配置名；per_scene表示按场景映射')
-    parser.add_argument('--stage3_recall_cfg_yaml', default="configs/stage3_recall_thresholds.yaml", type=str, help='Stage 3 recall阈值配置YAML')
+    parser.add_argument('--stage3_recall_cfg_yaml', default="configs/pose_inference_recall_thresholds.yaml", type=str, help='Stage 3 recall阈值配置YAML')
     parser.add_argument(
         '--stage3_print_progressive_recall',
         default=False,
@@ -224,7 +272,7 @@ def get_parse(print_summary=True):
         help='Stage 3经由Stage 2继续继承Stage 1时使用的scope；为空时回退到Stage 2记录的 inherit_stage1_scope',
     )
 
-    # 硬件配置
+    # Hardware settings
     parser.add_argument('--gpu_ids', default='0', type=str, help='GPU IDs, 例如: 0 或 0,1,2')
     parser.add_argument('--num_worker', default=8, type=int, help='DataLoader worker数量')
     parser.add_argument(
@@ -235,7 +283,7 @@ def get_parse(print_summary=True):
     )
     parser.add_argument('--autocast', action='store_true', default=False, help='是否使用混合精度训练')
 
-    # 网络配置
+    # Network settings
     parser.add_argument('--backbone', default="dinov3", type=str,
                         help='Backbone类型: ViTB-224, dinov2, dinov3等')
     parser.add_argument(
@@ -247,11 +295,13 @@ def get_parse(print_summary=True):
     parser.add_argument('--aggregator_type', default='salad', type=str,
                         help='聚合器类型: salad, g2m, g2m_scalar_p, g2m_channelwise_p, gem, fsra, lpn, netvlad')
 
-    # 训练配置
+    # Training settings
     parser.add_argument('--num_epochs', default=100, type=int, help='训练轮数')
     parser.add_argument('--scale_filter_mode', default=None, choices=['none', 'percentile', 'mad'],
                         help='尺度过滤：none 不过滤；percentile 严格 P2/P99；mad 复现 master 通用 MAD 3.5。未配置时兼容旧行为。')
-    parser.add_argument('--split_source', default='generated', choices=['generated', 'csv'], help='按比例生成划分，或显式读取 CSV 划分列')
+    parser.add_argument('--enable_edge_filter', type=_parse_boolean, default=None,
+                        help='是否启用卫星采样边缘过滤；JSON 模式下用于选择已保存的过滤方案')
+    parser.add_argument('--split_source', default='generated', choices=['generated', 'csv', 'json'], help='按比例生成划分，读取 CSV 列，或读取固定 JSON（比例由 JSON 决定）')
     parser.add_argument('--split_val_ratio', default=0.0, type=float, help='验证集占全部参与划分样本的比例；从原测试集合中划出，默认关闭')
     parser.add_argument('--split_train_ratio', default=0.9, type=float, help='UAV 数据集训练集比例')
     parser.add_argument(
@@ -303,30 +353,38 @@ def get_parse(print_summary=True):
         help='尺度扰动半径占完整尺度跨度的比例；0.05表示加上±5%%*(scale_max-scale_min)',
     )
 
-    # Grid配置
+    parser.add_argument(
+        '--use_uavimgs',
+        # Keep an unset sentinel so explicit CLI false overrides YAML true.
+        default=None,
+        type=_parse_boolean,
+        help='Neural-field training: false = satellite crops only (default); true = satellite + UAV images',
+    )
+
+    # Grid settings
     parser.add_argument('--freeze_grid', action='store_true', default=False,
                         help='是否冻结Grid（Stage 3中使用）')
+    parser.add_argument('--p_grid_config_yaml', default=None, type=str,
+                        help='神经场网格配置路径；默认使用 YAML 或检查点记录的结构')
 
-    # ==================== 向后兼容参数（用于单场景模式） ====================
+    # ==================== Legacy single-scene options ====================
     parser.add_argument('--p_satinfo_json', default='', type=str, help='卫星图信息JSON路径（向后兼容）')
     parser.add_argument('--p_uavinfo_json', default='', type=str, help='UAV图信息JSON路径（向后兼容）')
     parser.add_argument('--p_uav_geocsv', default='', type=str, help='UAV地理信息CSV路径（向后兼容）')
     parser.add_argument('--dataset_name', default='default', type=str, help='数据集名称（向后兼容）')
 
-    # --- 1. 初始解析，获取命令行参数 ---
+    # --- 1. Parse the initial command-line arguments ---
     opt = parser.parse_args()
-    default_args = parser.parse_args(args=[]) # 保存默认值用于比较
+    default_args = parser.parse_args(args=[]) # Save defaults for comparison.
     
-    # 获取当前文件 (parser.py) 的绝对路径
+    # Resolve the absolute path of this file (parser.py).
     current_file_dir = os.path.dirname(os.path.abspath(__file__))
-    # 从当前文件目录向上两级到达项目根目录
+    # Ascend two levels from this directory to the project root.
     project_root = os.path.dirname(os.path.dirname(current_file_dir))
 
-    # --- 2. 合并配置字典的函数 ---
+    # --- 2. Define configuration dictionary merging ---
     def merge_configs(base_dict, override_dict):
-        """
-        递归合并字典：override_dict 中的值会覆盖 base_dict 中的值。
-        """
+        """Recursively merge dictionaries, giving override_dict precedence over base_dict."""
         for k, v in override_dict.items():
             if isinstance(v, dict) and isinstance(base_dict.get(k), dict):
                 base_dict[k] = merge_configs(base_dict[k], v)
@@ -334,11 +392,11 @@ def get_parse(print_summary=True):
                 base_dict[k] = v
         return base_dict
 
-    # --- 3. 加载基础配置和实验日志配置 ---
+    # --- 3. Load the base configuration and saved run configuration ---
     config_from_base_yaml = {}
     config_from_exp_log = {}
     
-    # 尝试加载命令行参数指定的YAML文件 (可能是基础配置，也可能是实验日志)
+    # Load the requested YAML, which may be a base configuration or a saved run.
     if opt.p_yaml:
         first_yaml_path_abs = os.path.join(project_root, opt.p_yaml)
         if os.path.exists(first_yaml_path_abs):
@@ -346,14 +404,14 @@ def get_parse(print_summary=True):
             with open(first_yaml_path_abs, 'r', encoding='utf-8') as f:
                 temp_config = yaml.safe_load(f)
             
-            # 检查这个YAML文件是否是实验日志 (通过是否存在p_yaml键来判断)
+            # A p_yaml key identifies a saved run configuration.
             if 'p_yaml' in temp_config or ('exp_setting' in temp_config and 'p_yaml' in temp_config['exp_setting']):
-                # 这是一个实验日志
+                # This YAML describes a saved run.
                 config_from_exp_log = temp_config
                 base_yaml_path_rel = config_from_exp_log.get('p_yaml') or (config_from_exp_log.get('exp_setting', {})).get('p_yaml')
 
-                # 尝试加载基础配置文件（作为默认值的补充）
-                # 如果实验日志已经包含完整配置，基础配置文件可以不存在
+                # Load the base configuration to supply additional defaults.
+                # The base file may be absent if the saved run contains a complete configuration.
                 if base_yaml_path_rel:
                     base_yaml_path_abs = os.path.join(project_root, base_yaml_path_rel)
                     if os.path.exists(base_yaml_path_abs):
@@ -365,13 +423,13 @@ def get_parse(print_summary=True):
                 else:
                     print(f"提示: 实验日志 '{first_yaml_path_abs}' 中未指定基础配置文件，将使用实验日志中的完整配置。")
             else:
-                # 这是一个基础配置文件
+                # This is a base configuration file.
                 config_from_base_yaml = temp_config
                 print(f"检测到 '{first_yaml_path_abs}' 是基础配置文件。")
         else:
             print(f"警告: 命令行指定的YAML文件 '{first_yaml_path_abs}' 不存在。")
 
-    # 如果没有通过命令行指定，或者命令行指定的是exp_log但exp_log中没有p_yaml，则加载默认的基础配置文件
+    # Load the default base file if none was specified or the saved run lacks p_yaml.
     if not config_from_base_yaml:
         default_base_yaml_path_rel = default_args.p_yaml
         default_base_yaml_path_abs = os.path.join(project_root, default_base_yaml_path_rel)
@@ -382,11 +440,11 @@ def get_parse(print_summary=True):
         else:
             print(f"警告: 默认基础配置文件 '{default_base_yaml_path_abs}' 不存在。")
 
-    # --- 4. 合并配置 (基础配置 -> 实验日志) ---
+    # --- 4. Merge configurations (base, then saved run) ---
     final_merged_config = merge_configs(config_from_base_yaml, config_from_exp_log)
 
-    # --- 5. 将合并后的配置应用到opt对象 (尊重命令行参数) ---
-    # 先将合并后的YAML配置应用到opt对象
+    # --- 5. Apply merged settings to opt, respecting CLI arguments ---
+    # Apply the merged YAML configuration to opt first.
     for section, params in final_merged_config.items():
         if section == 'scenes_setting':
             setattr(opt, 'scenes_setting', copy.deepcopy(params))
@@ -401,22 +459,36 @@ def get_parse(print_summary=True):
                 params = dict(params)
                 params['reject_sampling'] = params['reject_sampleing']
             for key, value in params.items():
-                # 只有当命令行参数是其默认值时，才允许YAML覆盖
+                # YAML may override a CLI option only when it still has its default value.
                 # YAML-only keys may already exist from an earlier section.
                 # They have no argparse default and remain overridable by YAML.
                 if not hasattr(default_args, key) or getattr(opt, key) == getattr(default_args, key):
                     setattr(opt, key, value)
-        else: # 顶级参数
+        else: # Top-level options
             if not hasattr(default_args, section) or getattr(opt, section) == getattr(default_args, section):
                 setattr(opt, section, params)
     
+    if opt.use_uavimgs is None:
+        opt.use_uavimgs = False
+    if not isinstance(opt.use_uavimgs, bool):
+        raise ValueError("data_setting.use_uavimgs must be a YAML boolean (true/false).")
+
     if opt.scale_filter_mode is not None and opt.scale_filter_mode not in {"none", "percentile", "mad"}:
         raise ValueError("scale_filter_mode must be none, percentile, or mad.")
+    if opt.enable_edge_filter is None:
+        opt.enable_edge_filter = True
+    if not isinstance(opt.enable_edge_filter, bool):
+        raise ValueError('enable_edge_filter must be a YAML boolean')
+    if opt.split_source == 'json':
+        from continuloc.datasets.fixed_splits import select_filter_profile
+        select_filter_profile(opt.enable_edge_filter, opt.scale_filter_mode)
+        if opt.split_val_ratio != 0:
+            raise ValueError('Fixed train/test JSON requires split_val_ratio=0')
 
-    # --- 6. 检查并设置场景配置 (向后兼容) ---
+    # --- 6. Validate and populate scene settings (legacy compatibility) ---
     if not hasattr(opt, 'scenes_setting') or not opt.scenes_setting:
         print("警告：未找到 scenes_setting，将使用命令行参数作为单场景配置")
-        # 如果 YAML 中没有 scenes_setting，使用旧的单场景配置方式（向后兼容）
+        # Fall back to legacy single-scene settings when YAML lacks scenes_setting.
         opt.scenes_setting = {
             'sampling_strategy': 'round_robin',
             'scenes': [{
@@ -440,7 +512,8 @@ def get_parse(print_summary=True):
             opt.scenes_setting = copy.deepcopy(opt.scenes_setting)
             opt.scenes_setting.pop('selected_scene_names', None)
             opt.scenes_setting['selected_scene_name'] = opt.selected_scene_name
-        opt.scenes_setting = _expand_selected_scene_config(opt.scenes_setting)
+        opt.scenes_setting = _expand_selected_scene_config(
+            opt.scenes_setting, require_splits=opt.split_source == 'json')
 
     legacy_exps_dir = getattr(opt, 'exps_dir', None)
     if not getattr(opt, 'dir2save_log', None):
@@ -454,7 +527,15 @@ def get_parse(print_summary=True):
             opt.dir2save_ckpt = legacy_exps_dir
         print("提示: `exps_dir` 已废弃，请改用 `dir2save_log` 和 `dir2save_ckpt`。")
 
-    # 兼容仍然直接读取 opt.exps_dir 的旧代码；语义上将其映射为日志根目录。
+    # Output roots are relative to this checkout, independent of the launch cwd.
+    project_root = Path(__file__).resolve().parents[2]
+    for key in ('dir2save_log', 'dir2save_ckpt'):
+        path = Path(getattr(opt, key)).expanduser()
+        if not path.is_absolute():
+            path = project_root / path
+        setattr(opt, key, str(path.resolve()))
+
+    # Map opt.exps_dir to the log root for legacy callers that still read it directly.
     opt.exps_dir = opt.dir2save_log
 
     backbone_config = getattr(opt, 'backbone_config', {})
@@ -487,7 +568,7 @@ def get_parse(print_summary=True):
         raise TypeError(f"hash_lod_aggregator must be a dict, got {type(hash_lod_aggregator).__name__}")
     opt.hash_lod_aggregator = dict(hash_lod_aggregator)
 
-    # --- 7. 组织参数到 group_dict ---
+    # --- 7. Organize options into group_dict ---
     group_info = {
         'exp_setting': ['p_yaml', 'exp_name', 'dir2save_log', 'dir2save_ckpt', 'load2train', 'load2test',
                         'load_stage1_ckpt', 'load_stage2_ckpt',
@@ -522,6 +603,7 @@ def get_parse(print_summary=True):
                         'save_freq', 'val', 'val_freq',
                         'p_satinfo_json', 'p_uavinfo_json', 'p_uav_geocsv'],
         'data_setting': [
+            'enable_edge_filter',
             'scale_filter_mode',
             'pad_mode',
             'imgsize2net',
@@ -534,6 +616,7 @@ def get_parse(print_summary=True):
             'n_global_negatives_per_batch',
             'reject_sampling',
             'sat_as_query',
+            'use_uavimgs',
             'pair_alignment_mode',
             'sat_scale_sampling_mode',
             'sat_scale_jitter_enabled',
@@ -628,7 +711,7 @@ def get_parse(print_summary=True):
     opt.group_dict = group_info
     opt._config_summary_printed = False
 
-    # --- 8. 最终打印和返回 ---
+    # --- 8. Print the final configuration and return ---
     if print_summary:
         print_config_summary(opt)
 

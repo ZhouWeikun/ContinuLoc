@@ -1,0 +1,13 @@
+# ContinuScenes single-scene training example; base: configs/neural_field_continuscenes.yaml.
+# Select scenes from the manifest; unspecified settings inherit the base configuration.
+# Fill in the encoder checkpoint and matching opts.yaml, then set enabled: true.
+experiments:
+  - name: neural_field_example
+    enabled: false
+    overrides:
+      selected_scene_name: visloc_03
+      load_stage1_ckpt: ''
+      inherit_stage1_yaml: ''
+      split_mode: segment
+# Grid: configs/neural_field_hash_grid_continuscenes.yaml, with a 19-bit default.
+# Zurich and VisLoc used 18/19-bit grids; reproduction or resumption must match the original model.

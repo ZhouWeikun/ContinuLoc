@@ -60,13 +60,13 @@ class SALAD_Residual(nn.Module):
                  input_feat_dim=768,
                  num_clusters=32,
                  cluster_dim=64,
-                 base_dim=256,  # 对应hash table输出
+                 base_dim=256,  # Corresponds to hash-table output.
                  dropout=0.3,
                  img_hw=(224, 224),
                  patchsize=14,
                  with_dustbin=True,
                  hidden_layer_dim=512,
-                 use_residual=True,  # 新增：是否使用残差结构
+                 use_residual=True,  # Whether to use a residual structure
                  ):
         super().__init__()
 
@@ -87,14 +87,14 @@ class SALAD_Residual(nn.Module):
         else:
             dropout = nn.Identity()
 
-        # 修改：global token变为base feature
+        # Use the global token as the base feature.
         self.base_features = nn.Sequential(
             nn.Linear(input_feat_dim, hidden_layer_dim),
             nn.ReLU(),
             nn.Linear(hidden_layer_dim, base_dim)
         )
 
-        # 修改：local聚合变为residual/modulation
+        # Use local aggregation as a residual/modulation term.
         self.residual_features = nn.Sequential(
             nn.Conv2d(input_feat_dim, hidden_layer_dim, 1),
             dropout,
@@ -110,7 +110,7 @@ class SALAD_Residual(nn.Module):
             nn.Conv2d(self.hidden_layer_dim, self.num_clusters, 1),
         )
         # Dustbin parameter z
-        self.dust_bin = nn.Parameter(torch.tensor(0.)) #todo:改为0初始化看看,org=1.
+        self.dust_bin = nn.Parameter(torch.tensor(0.))
 
         # Keep the module schema stable across save/load. Older checkpoints may
         # contain this projection even before the first forward in a new process.
@@ -135,10 +135,10 @@ class SALAD_Residual(nn.Module):
             token_hw = (side, side)
         x = x.reshape((x.shape[0], token_hw[0], token_hw[1], self.input_feat_dim)).permute(0, 3, 1, 2)
 
-        # 1. 基础特征（对应hash table输出）
+        # 1. Base feature corresponding to the hash-table output
         base = self.base_features(t)  # [B, base_dim]
 
-        # 2. 高频调制特征（对应MLP输出）
+        # 2. High-frequency modulation corresponding to the MLP output
         residual = self.residual_features(x).flatten(2)  # [B, cluster_dim, num_tokens]
         p = self.score(x).flatten(2)
 
@@ -147,19 +147,19 @@ class SALAD_Residual(nn.Module):
         p = torch.exp(p)
         p = p[:, :-1, :] if self.with_dustbin else p
 
-        # 聚合残差
+        # Aggregate the residual.
         p = p.unsqueeze(1).repeat(1, self.cluster_dim, 1, 1)
         residual = residual.unsqueeze(2).repeat(1, 1, self.num_clusters, 1)
         residual_agg = (residual * p).sum(dim=-1).flatten(1)  # [B, cluster_dim*num_clusters]
 
         if self.use_residual:
-            # 方案1: 残差结构（推荐）
-            # base是低频，residual是高频修正
+            # Option 1: residual structure (recommended)
+            # The base carries low frequencies; the residual supplies high-frequency corrections.
             base_expanded = base.unsqueeze(-1).expand(-1, -1,
                                                       self.base_expand_factor)
             base_expanded = base_expanded.reshape(base.shape[0], -1)
 
-            # 确保维度匹配
+            # Ensure matching dimensions.
             if base_expanded.shape[1] != residual_agg.shape[1]:
                 if not hasattr(self, 'base_projection'):
                     raise RuntimeError(
@@ -168,25 +168,11 @@ class SALAD_Residual(nn.Module):
                     )
                 base_expanded = self.base_projection(base)
 
-            # feat = base_expanded + residual_agg  # 残差相加
-            feat = F.normalize(base_expanded, p=2, dim=-1) + F.normalize(residual_agg,p=2, dim=-1)  # 残差相加
+            feat = F.normalize(base_expanded, p=2, dim=-1) + F.normalize(residual_agg,p=2, dim=-1)  # Add the residual.
             feat = F.normalize(feat, p=2, dim=-1)
 
-            #debug, analyse the feat
-            # part_global = nn.functional.normalize(base_expanded, p=2, dim=-1)
-            # part_local = nn.functional.normalize(residual_agg, p=2, dim=-1)
-            # global_mean = torch.mean(part_global).item()
-            # global_var = torch.var(part_global).item()
-            # local_mean = torch.mean(part_local).item()
-            # local_var = torch.var(part_local).item()
-            # var_per_dim_global = torch.var(part_global, dim=0)
-            # var_per_dim_loacl = torch.var(part_local, dim=0)
-            # var_of_var_global = torch.var(torch.var(part_global, dim=0), dim=-1)
-            # var_of_var_local = torch.var(torch.var(part_local, dim=0), dim=-1)
-            # global_scale = torch.norm(base_expanded, p=2, dim=-1).mean()
-            # local_scale = torch.norm(residual_agg, p=2, dim=-1).mean()
         else:
-            # 方案2: 直接拼接（退化为原始SALAD）
+            # Option 2: concatenate directly, recovering the original SALAD formulation.
             feat = torch.cat([
                 F.normalize(base, p=2, dim=-1),
                 F.normalize(residual_agg, p=2, dim=1)

@@ -1,0 +1,11 @@
+# ContinuScenes single-scene inference example; base: configs/pose_inference.yaml.
+# Fill in the field checkpoint and matching opts.yaml, then set enabled: true.
+# Inherit scene identity and grid structure from the model; resolve paths through the current manifest.
+experiments:
+  - name: pose_inference_example
+    enabled: false
+    overrides:
+      load_stage2_ckpt: ''
+      inherit_stage2_yaml: ''
+      selected_scene_name: '' # Empty inherits the model's single-scene identity.
+      hds_eval_n_samples: null # Full evaluation; set to 1 for a smoke check.

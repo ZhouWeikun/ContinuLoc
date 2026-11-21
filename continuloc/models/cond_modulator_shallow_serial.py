@@ -1,30 +1,31 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from continuloc.models.res_mlp import ResnetBlockFC
+from continuloc.models.residual_mlp import ResnetBlockFC
 
 
 class SerialModulatorShallow(nn.Module):
-    """基于外部条件的浅层串行调制器
+    """Shallow serial modulator conditioned on external features.
 
-    该模块通过外部条件特征（如平面特征、体素特征等）对输入特征进行逐层调制，
-    适用于条件生成任务（如隐式神经表示、占据场预测等）。
+    Modulate inputs layer by layer using conditions such as plane or voxel
+    features, for conditional generation, implicit representations, or occupancy.
 
     Args:
-        input_dim: 输入特征的维度（如 3D 坐标为 3，也可以是其他特征）
-        condition_dim: 条件特征的维度（如平面特征维度）
-        hidden_dim: 隐藏层维度
-        num_blocks: ResNet 块的数量
-        output_dim: 输出维度（默认为 1，用于 SDF/occupancy）
-        condition_operator: 条件特征的融合方式 ('add' 或 'mul')
-        output_activation_type: 输出层前的激活函数类型 ('relu', 'leaky_relu', 'gelu', 'silu', 'none')
-        encoder_init_type: 输入编码层的初始化类型 ('default', 'kaiming_normal', 'xavier_uniform', 'zero', 'small_random')
-        output_init_type: 输出层的初始化类型 ('default', 'kaiming_normal', 'xavier_uniform', 'zero', 'small_random')
-        condition_init_type: 条件投影层的初始化类型 ('default', 'kaiming_normal', 'xavier_uniform', 'zero', 'small_random')
-        block_norm_type: ResNet 块内的归一化类型 ('none', 'layernorm')
-        block_activation_type: ResNet 块内的激活函数类型 ('relu', 'leaky_relu', 'gelu', 'silu', 'none')
-        block_init_type: ResNet 块的权重初始化类型 ('default', 'resnet_zero_init', 'kaiming_normal', 'xavier_uniform')
-    """
+        input_dim: Input feature dimension, e.g. 3 for 3D coordinates.
+        condition_dim: External conditioning feature dimension.
+        hidden_dim: Hidden-layer dimension.
+        num_blocks: Number of ResNet blocks.
+        output_dim: Output dimension, default 1 for SDF/occupancy.
+        condition_operator: Condition fusion, 'add' or 'mul'.
+        output_activation_type: relu, leaky_relu, gelu, silu, or none before output.
+        encoder_init_type: Input-layer initialization: default, kaiming_normal,
+            xavier_uniform, zero, or small_random.
+        output_init_type: Output-layer initialization with the same choices.
+        condition_init_type: Condition-projection initialization with the same choices.
+        block_norm_type: ResNet block normalization: none or layernorm.
+        block_activation_type: Block activation: relu, leaky_relu, gelu, silu, or none.
+        block_init_type: Block initialization: default, resnet_zero_init,
+            kaiming_normal, or xavier_uniform."""
 
     def __init__(self,
                  input_dim: int = 3,
@@ -51,16 +52,16 @@ class SerialModulatorShallow(nn.Module):
         self.output_dim = output_dim
         self.norm_output = norm_output
 
-        # 输入特征的初始编码层
+        # Initial input-feature encoding layer
         self.input_encoder = nn.Linear(input_dim, hidden_dim)
 
-        # 条件特征的线性投影层（每个 ResNet 块一个）
+        # One linear condition projection per ResNet block
         if condition_dim != 0:
             self.condition_projectors = nn.ModuleList([
                 nn.Linear(condition_dim, hidden_dim) for _ in range(num_blocks)
             ])
 
-        # ResNet 残差块（使用统一的配置）
+        # ResNet residual blocks with shared configuration
         self.resnet_blocks = nn.ModuleList([
             ResnetBlockFC(
                 input_dim=hidden_dim,
@@ -70,13 +71,13 @@ class SerialModulatorShallow(nn.Module):
             ) for _ in range(num_blocks)
         ])
 
-        # 最终输出层
+        # Final output layer
         self.output_head = nn.Linear(hidden_dim, output_dim)
 
-        # 输出层前的激活函数
+        # Activation before the output layer
         self.output_activation = self._get_activation_function(output_activation_type)
 
-        # 条件融合算子（加法或乘法）
+        # Condition fusion operator: addition or multiplication
         if condition_operator == 'add':
             self.condition_fusion = torch.add
         elif condition_operator == 'mul':
@@ -84,7 +85,7 @@ class SerialModulatorShallow(nn.Module):
         else:
             raise ValueError(f"Unknown condition operator: {condition_operator}. Use 'add' or 'mul'.")
 
-        # 初始化所有线性层
+        # Initialize all linear layers.
         self._initialize_linear_layer(self.input_encoder, encoder_init_type)
         self._initialize_linear_layer(self.output_head, output_init_type)
         if condition_dim != 0:
@@ -92,19 +93,15 @@ class SerialModulatorShallow(nn.Module):
                 self._initialize_linear_layer(projector, condition_init_type)
 
     def _initialize_linear_layer(self, layer: nn.Linear, init_type: str):
-        """统一的线性层初始化方法
+        """Initialize a linear layer using the selected method.
 
         Args:
-            layer: 要初始化的线性层
-            init_type: 初始化类型
-                - 'default': 使用 PyTorch 默认初始化（不做任何操作）
-                - 'kaiming_normal': Kaiming 正态初始化（适合 ReLU）
-                - 'kaiming_uniform': Kaiming 均匀初始化
-                - 'xavier_normal': Xavier 正态初始化（适合 Sigmoid/Tanh）
-                - 'xavier_uniform': Xavier 均匀初始化
-                - 'zero': 零初始化（权重和偏置都为零）
-                - 'small_random': 小范围随机初始化 (±0.0001)
-        """
+            layer: Linear layer to initialize.
+            init_type: default leaves PyTorch initialization unchanged;
+                kaiming_normal/kaiming_uniform use Kaiming initialization
+                (normal is suitable for ReLU); xavier_normal/xavier_uniform
+                use Xavier initialization (normal suits sigmoid/tanh);
+                zero clears weights and biases; small_random samples within +/-0.0001."""
         if init_type == 'default':
             return
         elif init_type == 'kaiming_normal':
@@ -137,14 +134,7 @@ class SerialModulatorShallow(nn.Module):
                              f"'xavier_normal', 'xavier_uniform', 'zero', or 'small_random'.")
 
     def _get_activation_function(self, activation_type: str):
-        """获取激活函数
-
-        Args:
-            activation_type: 激活函数类型
-
-        Returns:
-            对应的激活函数
-        """
+        """Return the activation function selected by activation_type."""
         activation_type = activation_type.lower()
 
         if activation_type == 'relu':
@@ -162,43 +152,40 @@ class SerialModulatorShallow(nn.Module):
                              f"Use 'relu', 'leaky_relu', 'gelu', 'silu', or 'none'.")
 
     def forward(self, inputs: torch.Tensor, condition_features: torch.Tensor, **kwargs) -> torch.Tensor:
-        """前向传播
+        """Run the forward pass.
 
         Args:
-            inputs: 输入特征，形状 (B, N, input_dim) 或 (B, input_dim)
-            condition_features: 条件特征，形状 (B, N, condition_dim) 或 (B, condition_dim)
-
+            inputs: Features (B, N, input_dim) or (B, input_dim).
+            condition_features: Conditions (B, N, condition_dim) or (B, condition_dim).
         Returns:
-            输出预测值，形状 (B, N) 或 (B,)
-        """
+            Predictions shaped (B, N) or (B,) for a scalar output."""
         inputs = inputs.float()
 
-        # 编码输入特征
+        # Encode input features.
         hidden_features = self.input_encoder(inputs)
 
-        # 逐块处理：条件调制 + ResNet 残差块
+        # Apply condition modulation and a ResNet residual block at each step.
         for block_idx in range(self.num_blocks):
-            # 如果有条件特征，进行调制
+            # Modulate when conditioning features are available.
             if self.condition_dim != 0:
                 condition_projected = self.condition_projectors[block_idx](condition_features)
                 hidden_features = self.condition_fusion(hidden_features, condition_projected)
 
-            # 通过 ResNet 块
+            # Apply the ResNet block.
             hidden_features = self.resnet_blocks[block_idx](hidden_features)
 
-        # 最终激活并输出
+        # Apply the final activation and output layer.
         output = self.output_head(self.output_activation(hidden_features))
 
-        # 压缩最后一维（如果输出维度为 1）
+        # Squeeze the last dimension for scalar outputs.
         output = output.squeeze(-1)
-        # output = torch.nn.functional.normalize(output,dim=-1) if self.norm_output else output
 
         return output
 
 
-# 使用示例
+# Usage examples
 if __name__ == "__main__":
-    # 示例1: 使用默认配置（PyTorch 默认初始化）
+    # Example 1: default configuration with PyTorch initialization
     model_default = SerialModulatorShallow(
         input_dim=3,
         condition_dim=128,
@@ -214,11 +201,11 @@ if __name__ == "__main__":
         block_activation_type='relu',
         block_init_type='resnet_zero_init'
     )
-    # 打印参数量
+    # Print the parameter count.
     total_params = sum(p.numel() for p in model_default.parameters())
     print(f"Total parameters: {total_params:,}")
 
-    # 示例2: 使用 Kaiming 初始化（适合 ReLU 网络）
+    # Example 2: Kaiming initialization for ReLU networks
     model_kaiming = SerialModulatorShallow(
         input_dim=3,
         condition_dim=128,
@@ -235,7 +222,7 @@ if __name__ == "__main__":
         block_init_type='kaiming_normal'
     )
 
-    # 示例3: 使用小初始化（适合 SDF 任务）
+    # Example 3: small initialization for SDF tasks
     model_sdf = SerialModulatorShallow(
         input_dim=3,
         condition_dim=128,
@@ -245,20 +232,20 @@ if __name__ == "__main__":
         condition_operator='add',
         output_activation_type='relu',
         encoder_init_type='kaiming_normal',
-        output_init_type='small_random',  # 输出层使用小初始化
+        output_init_type='small_random',  # Use small initialization for the output layer.
         condition_init_type='xavier_uniform',
         block_norm_type='layernorm',
         block_activation_type='relu',
         block_init_type='resnet_zero_init'
     )
 
-    # 模拟输入
+    # Create mock inputs.
     batch_size = 4
     num_points = 1024
     inputs = torch.randn(batch_size, num_points, 3)
     condition_features = torch.randn(batch_size, num_points, 128)
 
-    # 前向传播
+    # Run the forward pass.
     output1 = model_default(inputs, condition_features)
     output2 = model_kaiming(inputs, condition_features)
     output3 = model_sdf(inputs, condition_features)
@@ -268,7 +255,7 @@ if __name__ == "__main__":
     print(f"Kaiming 模型输出形状: {output2.shape}")
     print(f"SDF 模型输出形状: {output3.shape}")
 
-    # 检查初始化效果
+    # Inspect initialization results.
     print(f"\n输出层权重统计:")
     print(
         f"默认模型 - mean: {model_default.output_head.weight.mean():.6f}, std: {model_default.output_head.weight.std():.6f}")

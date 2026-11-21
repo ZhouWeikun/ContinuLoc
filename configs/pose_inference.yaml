@@ -1,0 +1,120 @@
+# Shared ContinuScenes pose inference configuration; set weights through experiment overrides.
+# Stage numbers have two meanings:
+# Overall workflow: Stage 1 trains the visual encoder; Stage 2 trains the field; Stage 3 infers poses.
+# Within inference: hds_stage1_* is coarse search, hds_stage2_* contraction, hds_stage3_* CMA refinement.
+# inherit_stage1_fm_stage2 uses workflow numbering: recover encoder weights/config from field training.
+# Inherit network/split settings from Stage 2 opts; resolve scene paths through the current manifest.
+exp_setting:
+  # The launcher sets the run log directory to gen_fm_exps/logs/inference_stage3/<run_id>.
+  dir2save_log: gen_fm_exps/logs
+  # Weight root required by the shared configuration; inference loads the checkpoints specified below.
+  dir2save_ckpt: gen_fm_exps/ckpts
+  # Run-name prefix; UTC timestamps are appended. Batch entries override this with their name.
+  exp_name: stage3_inference
+  # Inference does not need training curves; retain the shared setting.
+  tensorboard: false
+  # Shared validation flag; Stage 3 still reports val/test separately according to dataset splits.
+  val: false
+  # Required: a trained single-scene Stage 2 checkpoint and its matching opts.yaml.
+  load_stage2_ckpt: ''
+  inherit_stage2_yaml: ''
+  # Empty selects gen_fm_exps/inference_stage3/<run_id>; an explicit directory must not already exist.
+  stage3_analysis_export_root: ''
+  # Inherit network/data/scenes from Stage 2 opts; explicit local YAML fields take precedence.
+  inherit_stage2_scope: network,data,scenes
+  # Recover the Stage 1 weights and configuration used to train the Stage 2 model.
+  inherit_stage1_fm_stage2: true
+  # Inherit only network settings from Stage 1 to load the feature extractor.
+  inherit_stage1_fm_stage2_scope: network
+  # per_scene selects thresholds by scene name; unknown scenes use the threshold file's default.
+  # Explicit names such as cfg01/cfg02 also work. These thresholds do not control search radii.
+  stage3_recall_cfg: per_scene
+  # Named thresholds and scene mappings; path relative to the project root.
+  stage3_recall_cfg_yaml: configs/pose_inference_recall_thresholds.yaml
+  # Empty infers the scene from Stage 2 opts; an explicit value must match its single scene.
+  selected_scene_name: ''
+  # Print Recall@K for coarse search, population contraction, and CMA refinement.
+  stage3_print_progressive_recall: true
+hardware_setting:
+  # GPU IDs in the project's shared configuration format
+  gpu_ids: '0'
+  # Number of evaluation DataLoader workers
+  num_worker: 8
+  # Keep satellite maps on the CPU to reduce initial GPU memory use.
+  satmaps_on_cpu: true
+scenes_setting:
+  manifest_dir: /home/data/zwk/dataset_ContinuScenes
+data_setting:
+  split_source: json
+  split_val_ratio: 0.0
+  enable_edge_filter: true
+  scale_filter_mode: none
+network_setting:
+  # Null loads the checkpoint's matching grid structure from Stage 2 opts.
+  p_grid_config_yaml: null
+inference_setting:
+  # Stage 1 coarse search: spatial stride is approximately crop size * (1 - overlap); overlap is in [0, 1).
+  hds_stage1_overlap: 0.0
+  # Rotation bins cover 360 degrees; scale bins are separate. Spatial counts depend on scene/overlap.
+  hds_stage1_n_rot: 36
+  hds_stage1_n_scale: 4
+  # Scale spacing: linear spaces scale values uniformly; log spaces their logarithms uniformly.
+  # This controls the candidate grid, unlike hds_scale_select_mode, which aggregates scale scores.
+  hds_stage1_scale_spacing: linear
+  # Feature source for the initial coarse gallery:
+  # ingp queries the Stage 2 field at candidate coordinates; visual_encoder crops satellite images
+  # at candidate 4D poses and encodes them with Stage 1. Later stages use INGP in either case.
+  hds_stage1_gallery_feature_source: ingp #visual_encoder | ingp
+  # Encoder forward batch size for visual galleries; independent of candidate scoring chunk size.
+  hds_stage1_visual_gallery_batch_size: 1024
+  # Visual-gallery calibration: cosine_softmax applies temperature softmax to normalized-feature
+  # cosine similarities over the scale dimension at each fixed position/rotation anchor,
+  # preserving its original total score, so only scale decoding changes, not anchor ranking.
+  # global_pose_max also uses these calibration settings for INGP; per_anchor INGP keeps its original scores.
+  # raw_score retains the legacy (2-L2)/2 mapping for ablations.
+  hds_stage1_visual_score_mode: cosine_softmax # cosine_softmax | raw_score
+  hds_stage1_visual_softmax_temperature: 0.02
+  # Sum coarse scores over scale at each position/rotation anchor and retain the highest-scoring fraction.
+  # Initial anchor count is ceil(total anchors * rho0), capped by max_anchors_k0.
+  hds_stage1_top_ratio_rho0: 0.1
+  hds_stage1_max_anchors_k0: 1024
+  # Stage 2 contracts populations around candidate anchors; rounds_t is the number of rounds.
+  # particles_m is the number of particles sampled per surviving candidate per round.
+  hds_stage2_rounds_t: 2
+  hds_stage2_particles_m: 8
+  # Round t uses local radius coefficient eta * alpha^t, starting at t=0.
+  # The coefficient scales coarse-grid half-widths in normalized search space, not meters.
+  hds_stage2_initial_radius_eta: 1.1
+  hds_stage2_radius_decay_alpha: 0.5
+  # Aggregate the top rho fraction of particles each round to update the candidate center.
+  hds_stage2_elite_ratio_rho: 0.125
+  # Candidate-cloud survival fractions by round; repeat the last entry if the list is shorter.
+  hds_stage2_population_survival_ratio_rho_pop:
+    - 0.25
+    - 0.125
+  # False fixes candidate scales during Stage 2 and samples only position and rotation.
+  hds_stage2_enable_scale_sampling: false
+  # Stage 3 refines at most the top k2 contracted candidates independently with CMA.
+  hds_stage3_max_modes_k2: 5
+  # Sep-CMA uses diagonal covariance; CMA is also supported.
+  hds_stage3_cma_variant: Sep-CMA
+  # Initial CMA sigma = this factor * final Stage 2 radius coefficient * 2 / max(spatial rows, columns).
+  # This is an optimization step size in normalized coordinates, not meters or an evaluation threshold.
+  hds_stage3_cma_sigma_factor: 1.1
+  # CMA population per candidate/generation, maximum generations, and no-improvement stopping patience.
+  hds_stage3_cma_popsize: 32
+  hds_stage3_cma_iters: 12
+  hds_stage3_cma_early_stop_patience: 5
+  # False optimizes only position and rotation, holding the incoming candidate scale fixed.
+  hds_stage3_optimize_scale: false
+  # Forward scoring chunk size; smaller chunks usually reduce peak GPU memory but take longer.
+  hds_score_chunk_size: 32768
+  # Null evaluates all queries; a positive integer selects the first N in loading order for quick checks.
+  hds_eval_n_samples: null
+  # Coarse-anchor scale selection: log_expectation averages log scale with probability weights;
+  # argmax selects the strongest discrete scale. Neither changes coarse-grid scale sampling.
+  hds_scale_select_mode: log_expectation
+  # per_anchor estimates scale independently per (xy,rot) candidate; global_pose_max first finds
+  # the maximum raw cosine over all (xy,rot) candidates per scale, then uses softmax for one query scale.
+  # That scale is fixed across subsequent seed trajectories; disable Stage 2/3 scale sampling/optimization.
+  hds_scale_select_scope: per_anchor # global_pose_max | per_anchor

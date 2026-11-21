@@ -1,14 +1,22 @@
-# 通用启动入口
+# Data preparation and maintenance
 
-从仓库根目录，在现有训练环境中执行：
+Training and inference commands are documented in the [experiment guides](../experiments/README.md). To evaluate the supplied models, follow the [paper reproduction workflow](../README.md#reproduce-inference-with-the-supplied-models).
+
+The tools in this directory support dataset preparation and run maintenance. They are not required to regenerate the frozen evaluation splits supplied with the models.
+
+## Export fixed splits for new experiments
+
+From the repository root:
 
 ```bash
-python experiments/train_stage1/run.py --p_yaml configs/stage1_visual_encoder_visloc.yaml --selected_scene_names 03 04 08 11
-python scripts/train_stage2.py --p_yaml configs/stage2_INGP_visloc.yaml --selected_scene_name 03
-python scripts/localize_stage3.py --stage3_yaml configs/stage3_ingp_minimal.yaml --stage2_opts_yaml /path/to/stage2/opts.yaml
-python scripts/update_data_splits.py --help
+python scripts/export_data_splits.py --help
+python scripts/export_data_splits.py \
+  --manifest /path/to/ContinuScenes/dataset_manifest.json \
+  --output-dir gen_fm_exps/data_preparation/splits
 ```
 
-训练和推理需要相应数据、依赖及检查点；这里仅负责参数解析与调用。
-实验专用启动和数据对齐可视化见 `experiments/`。旧 `trainers/` 中的三个入口
-仅用于兼容既有命令。Stage 1 使用 `experiments/train_stage1/run.py`；其他通用命令使用本目录入口。
+The output directory must not already exist. The exporter creates independent JSON files without modifying the source CSV files. It generates quality, quality-plus-edge, and quality-plus-edge-plus-scale profiles, each with segment and interval assignments. Inspect the exported files before using them as a new dataset protocol.
+
+For evaluation with the paper models, use the bundle's frozen assignments instead of newly generated splits.
+
+`update_data_splits.py` updates split columns in CSV files for workflows that use CSV-based assignments. Checkpoint and log cleanup utilities are also provided in this directory; review their arguments before using them on saved runs.

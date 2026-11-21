@@ -14,10 +14,9 @@ def _list_subdirs(directory: str) -> List[str]:
 
 
 def _find_prefix_ckpt(log_name: str, ckpt_names: Set[str]) -> Optional[str]:
-    """
-    若 log_name 形如 "{ckpt_name}_{extra}"（ckpt 名是 log 名的前缀），
-    返回匹配的 ckpt_name；否则返回 None。
-    """
+    """Return ckpt_name when log_name has the form '{ckpt_name}_{extra}'.
+
+    Return None if no checkpoint-name prefix matches."""
     for ckpt_name in ckpt_names:
         if log_name.startswith(ckpt_name + "_"):
             return ckpt_name
@@ -51,19 +50,16 @@ def clean_logs_without_ckpt(
     dry_run: bool = True,
     require_checkpoint_file: bool = False,
 ) -> List[str]:
-    """
-    删除 logs 根目录下那些在 ckpts 根目录中没有对应实验目录的日志文件夹。
+    """Remove log directories without a corresponding checkpoint experiment.
 
     Args:
-        ckpt_root: checkpoint 根目录。
-        log_root: log 根目录。
-        dry_run: True 时只打印，不实际删除。
-        require_checkpoint_file: True 时要求对应 ckpt 目录下至少存在一个 .pth 文件，
-            才认为该实验“有效存在”。
-
+        ckpt_root: Checkpoint root directory.
+        log_root: Log root directory.
+        dry_run: Print actions without deleting files when True.
+        require_checkpoint_file: Require at least one .pth file in the
+            checkpoint directory for an experiment to count as present.
     Returns:
-        被判定为无用、需要删除的 log 子目录名称列表。
-    """
+        Names of log subdirectories selected for deletion."""
     if not os.path.isdir(ckpt_root):
         raise FileNotFoundError(f"Checkpoint root not found: '{ckpt_root}'")
     if not os.path.isdir(log_root):
@@ -75,17 +71,17 @@ def clean_logs_without_ckpt(
     )
     log_exp_names = _list_subdirs(log_root)
 
-    # 精确匹配：log 名与 ckpt 名完全相同 → 保留
-    # 前缀匹配但多余后缀：log 名 = ckpt名_xx → 也删除
-    # 无任何匹配 → 删除
+    # Exact match: retain a log directory whose name equals the checkpoint directory name.
+    # Prefix with an extra suffix: delete log directories named ckpt_name_xx.
+    # No match: delete.
     logs_to_delete = [
         exp_name for exp_name in log_exp_names
         if exp_name not in ckpt_exp_names
     ]
 
-    # 在待删除列表中，区分"前缀匹配但有多余后缀"与"完全无关"两类
-    prefix_variant_logs = []   # log名 = 某ckpt名 + "_xx"
-    unrelated_logs = []        # log名与任何ckpt名均无前缀关系
+    # Separate deletion candidates with a matching prefix from entirely unrelated names.
+    prefix_variant_logs = []   # Log name equals a checkpoint name plus '_xx'.
+    unrelated_logs = []        # Log name has no matching checkpoint-name prefix.
     for exp_name in logs_to_delete:
         matched_ckpt = _find_prefix_ckpt(exp_name, ckpt_exp_names)
         if matched_ckpt is not None:
@@ -144,41 +140,3 @@ if __name__ == "__main__":
         dry_run=False,
         require_checkpoint_file=True,
     )
-
-    # parser = argparse.ArgumentParser(
-    #     description=(
-    #         "Clean log folders that do not have a corresponding experiment "
-    #         "folder under the checkpoint root."
-    #     )
-    # )
-    # parser.add_argument(
-    #     "--ckpt-root",
-    #     type=str,
-    #     # required=True,
-    #     help="Root directory that stores checkpoint experiment folders.",
-    # )
-    # parser.add_argument(
-    #     "--log-root",
-    #     type=str,
-    #     # required=True,
-    #     help="Root directory that stores log experiment folders.",
-    # )
-    # parser.add_argument(
-    #     "--execute",
-    #     action="store_true",
-    #     help="Actually delete unmatched log folders. Default is dry-run.",
-    # )
-    # parser.add_argument(
-    #     "--require-checkpoint-file",
-    #     action="store_true",
-    #     help="Only treat ckpt folders with at least one .pth file as valid.",
-    # )
-    #
-    # args = parser.parse_args()
-    # clean_logs_without_ckpt(
-    #     ckpt_root=args.ckpt_root,
-    #     log_root=args.log_root,
-    #     dry_run=not args.execute,
-    #     require_checkpoint_file=args.require_checkpoint_file,
-    # )
-    #

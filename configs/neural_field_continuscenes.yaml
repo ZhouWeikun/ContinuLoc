@@ -1,0 +1,54 @@
+# ContinuScenes: one dataset containing VisLoc and Wingtra scenes.
+# Scene paths and UAV image layouts come from the schema-v2 manifest.
+# Select subsets with --selected_scene_names visloc_03 zurich zuchwil.
+# Train one scene by default; set load_stage1_ckpt and inherit_stage1_yaml before training.
+exp_setting:
+  dir2save_log: gen_fm_exps/logs
+  dir2save_ckpt: gen_fm_exps/ckpts
+  exp_name: stage2_continuscenes
+  save_freq: 100
+  tensorboard: true
+  val: true
+  val_freq: 10
+  load_stage1_ckpt: ''
+  inherit_stage1_yaml: ''
+  inherit_stage1_scope: network,data
+  load2train: ''
+  load2test: ''
+scenes_setting:
+  dataset_name: continu_scenes
+  manifest_dir: /home/data/zwk/dataset_ContinuScenes
+  sampling_strategy: weighted
+  selected_scene_name: visloc_03
+data_setting:
+  use_uavimgs: false
+  sat_scale_sampling_mode: empirical
+  sat_scale_jitter_enabled: true
+  sat_scale_jitter_half_span_ratio: 0.05
+  # Apply to all selected scenes: none disables filtering; mad uses per-scene thresholds.
+  # Explicit local fields take precedence; inherited Stage 1 data fills only missing fields.
+  enable_edge_filter: true  # Select quality_edge in JSON; false selects quality.
+  scale_filter_mode: none  # With edge filtering enabled, mad selects quality_edge_scale.
+  split_source: json
+  # JSON fixes each scene's split proportions; split_train_ratio does not reassign samples.
+  split_train_ratio: 0.8
+  split_val_ratio: 0.00
+  split_mode: segment
+hardware_setting:
+  autocast: false
+  batchsize_sat: 512
+  batchsize_uav: 64
+  batchsize_uav_test: 128
+  gpu_ids: '0'
+  num_worker: 8
+  satmaps_on_cpu: true
+learning_setting:
+  num_epochs: 1000
+network_setting:
+  p_grid_config_yaml: configs/neural_field_hash_grid_continuscenes.yaml
+  posenc_multires_rc: 8
+  posenc_multires_rot: 6
+  posenc_multires_scale: 4
+  grid_mlp_hidden_dim: 1024
+  grid_mlp_num_blocks: 2
+  grid_mlp_use_coord_condition: true

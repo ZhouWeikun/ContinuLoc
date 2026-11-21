@@ -1,0 +1,83 @@
+# ContinuScenes: one dataset containing VisLoc and Wingtra scenes.
+# Scene paths and UAV image layouts come from the schema-v2 manifest.
+# Select subsets with --selected_scene_names visloc_03 zurich zuchwil.
+# Use all 12 default scenes (exclude overlapping variants).
+exp_setting:
+  dir2save_log: gen_fm_exps/logs
+  dir2save_ckpt: gen_fm_exps/ckpts
+  exp_name: stage1_continuscenes
+  save_freq: 1
+  tensorboard: true
+  val: true
+  val_freq: 1
+  load2test: ''
+  load2train: ''
+data_setting:
+  pad_mode: zeros
+  imgsize2net: 224
+  satimgsize2crop: 244
+  n_global_negatives_per_batch: 384
+  reject_sampling: true
+  pair_alignment_mode: full_4d
+  n_rand2sample_per_pos: 256
+  sat_as_query: false
+  split_source: json # generated | json
+  # JSON fixes split ratios per scene: VisLoc 80/20 and Zurich/Zuchwil 90/10.
+  split_mode: segment
+  split_train_ratio: 0.8
+  split_val_ratio: 0.0
+  # Apply to all selected scenes: none disables filtering; mad uses per-scene thresholds.
+  enable_edge_filter: true  # Select quality_edge in JSON; false selects quality.
+  scale_filter_mode: none  # With edge filtering enabled, mad selects quality_edge_scale.
+scenes_setting:
+  dataset_name: continu_scenes
+  manifest_dir: /home/data/zwk/dataset_ContinuScenes
+  selected_scene_names: [visloc_01, visloc_02, visloc_03, visloc_04, visloc_05, visloc_06, visloc_08, visloc_09, visloc_10, visloc_11, zurich, zuchwil]
+  sampling_strategy: weighted
+hardware_setting:
+  batchsize_uav: 32
+  autocast: true
+  gpu_ids: '0'
+  num_worker: 8
+  satmaps_on_cpu: true
+learning_setting:
+  loss_type: triplet_single_edge
+  triplet_alpha: 10.0
+  triplet_margin: 0.0
+  triplet_gate: softplus
+  triplet_enable_row_filter: false
+  triplet_learnable_alpha: false
+  triplet_metric: dist
+  triplet_reduction: mean
+  infonce_temperature: 0.1
+  infonce_learnable_temperature: false
+  infonce_gate: soft
+  infonce_negative_mode: batch_and_explicit
+  infonce_metric: similarity
+  infonce_normalize: true
+  num_epochs: 25
+  val_overlap: 0.5
+  val_query_rot2uniform: true
+  val_query_scale2uniform: false
+network_setting:
+  backbone: dinov2
+  freeze_backbone: true
+  backbone_config:
+    num_trainable_blocks: 2
+  aggregator_type: salad
+  aggregator_config:
+    output_dim: 1024
+    cluster_dim: 64
+    hidden_layer_dim: 512
+    use_residual: true
+    with_dustbin: true
+  adapter_config:
+    enabled: true
+    normalize_before_aggregator: false
+    n_last_blocks_with_adapter: 4
+    bottleneck_dim: 64
+    attn_adapter: false
+    ffn_parallel_adapter: true
+    scale: 0.2
+    dropout: 0.0
+    init: zero_up

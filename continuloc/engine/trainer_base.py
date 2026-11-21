@@ -1,14 +1,9 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""
-Trainer基类
+"""Trainer base class.
 
-提供所有Trainer共享的基础功能：
-- 设备管理
-- 数据集初始化
-- Checkpoint管理
-- 日志管理
-"""
+Shared functionality includes device management, dataset initialization,
+checkpoint management, and logging."""
 
 import torch
 import copy
@@ -17,35 +12,27 @@ from torch.utils.tensorboard import SummaryWriter
 
 from continuloc.config.parser import get_parse
 from continuloc.engine.logger_utils import get_logger
-from continuloc.datasets.dataset_neuloc_4d import UAVDataset, SatDataset
+from continuloc.datasets.uav_satellite import UAVDataset, SatDataset
 
 
 class BaseTrainer:
-    """
-    所有Trainer的基类
+    """Base class for all trainers.
 
-    提供基础功能：
-    - 配置管理
-    - 设备初始化
-    - 数据集加载
-    - Checkpoint加载/保存
-    - 日志管理
-    """
+    Provides configuration management, device initialization, dataset loading,
+    checkpoint loading/saving, and logging."""
 
     def __init__(self, opt=None):
-        """
-        初始化基类
+        """Initialize the base trainer.
 
         Args:
-            opt: 配置对象，如果为None则调用get_parse()
-        """
-        # 1. 配置管理
+            opt: Configuration object; call get_parse() when None."""
+        # 1. Configuration management
         self.opt = opt if opt is not None else get_parse()
 
-        # 2. 设备配置
+        # 2. Device setup
         self._init_device()
 
-        # 3. 日志（延迟初始化，在train()中调用）
+        # 3. Logging is initialized lazily in train().
         self.logger = None
         self.writer = None
         self.exp_dir2save = None
@@ -55,7 +42,7 @@ class BaseTrainer:
 
 
     def _init_device(self):
-        """初始化设备（GPU/CPU）"""
+        """Initialize the GPU or CPU device."""
         if torch.cuda.is_available():
             device = torch.device("cuda:" + self.opt.gpu_ids[0])
             self.opt.use_gpu = True
@@ -68,17 +55,15 @@ class BaseTrainer:
 
 
     def _get_train_log_filename(self, exp_name):
-        """返回训练日志文件名。子类可按需覆盖。"""
+        """Return the training log filename; subclasses may override this."""
         return "train.log"
 
 
     def _init_logger(self, exp_name=None):
-        """
-        初始化日志系统
+        """Initialize logging.
 
         Args:
-            exp_name: 实验名称，如果为None则使用opt.exp_name
-        """
+            exp_name: Experiment name; use opt.exp_name when None."""
         opt = self.opt
 
         if exp_name is None:
@@ -103,7 +88,7 @@ class BaseTrainer:
         self.exp_dir2save = self.ckpt_dir2save
         os.makedirs(self.log_dir2save, exist_ok=True)
 
-        # 初始化logger
+        # Initialize the logger.
         log_filename = self._get_train_log_filename(exp_name_unique)
         log_path = os.path.join(self.log_dir2save, log_filename)
         self.logger = get_logger(log_path, 'trainer_logger')
@@ -111,7 +96,7 @@ class BaseTrainer:
         self.logger.info(f"日志文件: {log_path}")
         self.logger.info(f"Checkpoint目录: {self.ckpt_dir2save}")
 
-        # 初始化tensorboard
+        # Initialize TensorBoard.
         if opt.tensorboard:
             tb_path = os.path.join(self.log_dir2save, "train_tensorboard.log")
             self.writer = SummaryWriter(tb_path)
@@ -121,12 +106,10 @@ class BaseTrainer:
 
 
     def _init_datasets(self, create_train_loader=False):
-        """
-        初始化多场景数据集
+        """Initialize datasets for multiple scenes.
 
         Args:
-            create_train_loader: 是否创建训练用的dataloader
-        """
+            create_train_loader: Whether to create a training DataLoader."""
         opt = self.opt
         scenes = opt.scenes_setting['scenes']
 
@@ -148,7 +131,7 @@ class BaseTrainer:
             else:
                 print(f"Warning: {msg}")
 
-        # 存储每个场景的数据集
+        # Store datasets for each scene.
         self.sat_datasets = {}
         self.uav_datasets_train = {}
         self.uav_datasets_test = {}
@@ -163,14 +146,14 @@ class BaseTrainer:
         for scene in scenes:
             scene_name = scene['name']
 
-            # 日志输出
+            # Log scene information.
             log_msg = f"正在初始化场景: {scene_name}"
             if self.logger:
                 self.logger.info(log_msg)
             else:
                 print(log_msg)
 
-            # 创建SatDataset
+            # Create SatDataset.
             sat_dataset = SatDataset(
                 p_satinfo_json=scene['p_satinfo_json'],
                 satellite_filepaths=scene.get('satellite_filepaths'),
@@ -180,6 +163,9 @@ class BaseTrainer:
                 split_train_ratio=opt.split_train_ratio,
                 split_mode=opt.split_mode,
                 split_source=getattr(opt, "split_source", "generated"),
+                p_split_json=scene.get('p_split_json'),
+                enable_edge_filter=getattr(opt, 'enable_edge_filter', True),
+                geo_rc_epsg_code=scene.get('geo_rc_epsg_code'),
                 name=scene_name,
                 device=sat_device,
                 enable_scale_filter=getattr(opt, "enable_scale_filter", False),
@@ -191,7 +177,7 @@ class BaseTrainer:
             )
             self.sat_datasets[scene_name] = sat_dataset
 
-            # 创建UAVDataset (train)
+            # Create the training UAVDataset.
             uav_dataset_train = UAVDataset(
                 p_uavinfo_json=scene['p_uavinfo_json'],
                 uavimgs_dir=scene.get('uavimgs_dir'),
@@ -204,14 +190,17 @@ class BaseTrainer:
                 device='cpu',
                 pad_mode=pad_mode,
                 dataset_name=self.opt.scenes_setting['dataset_name'],
+                uav_image_layout=scene.get('uav_image_layout'),
                 split_train_ratio=opt.split_train_ratio,
                 split_val_ratio=getattr(opt, "split_val_ratio", 0.0),
                 split_mode=opt.split_mode,
                 split_source=getattr(opt, "split_source", "generated"),
+                p_split_json=scene.get('p_split_json'),
+                enable_edge_filter=getattr(opt, 'enable_edge_filter', True),
             )
             self.uav_datasets_train[scene_name] = uav_dataset_train
 
-            # 创建UAVDataset (test)
+            # Create the test UAVDataset.
             uav_dataset_test = UAVDataset(
                 p_uavinfo_json=scene['p_uavinfo_json'],
                 uavimgs_dir=scene.get('uavimgs_dir'),
@@ -221,10 +210,13 @@ class BaseTrainer:
                 name=scene_name,
                 pad_mode=pad_mode,
                 dataset_name=self.opt.scenes_setting['dataset_name'],
+                uav_image_layout=scene.get('uav_image_layout'),
                 split_train_ratio=opt.split_train_ratio,
                 split_val_ratio=getattr(opt, "split_val_ratio", 0.0),
                 split_mode=opt.split_mode,
                 split_source=getattr(opt, "split_source", "generated"),
+                p_split_json=scene.get('p_split_json'),
+                enable_edge_filter=getattr(opt, 'enable_edge_filter', True),
             )
             self.uav_datasets_eval[scene_name] = uav_dataset_test
             for split in ("val", "test"):
@@ -238,13 +230,13 @@ class BaseTrainer:
             if self.logger:
                 self.logger.info(msg)
 
-            # 创建训练用的DataLoader（如果需要）
+            # Create the training DataLoader if requested.
             if create_train_loader:
-                # 这里可以添加特定的DataLoader创建逻辑
-                # 例如使用 UAVSatPairDataset + MultiSceneDataLoader
+                # Add specialized DataLoader construction here if needed.
+                # For example, use UAVSatPairDataset with MultiSceneDataLoader.
                 pass
 
-        # 保存第一个场景作为主数据集（用于UDF等计算）
+        # Use the first scene as the primary dataset for UDF and related computations.
         first_scene_name = scenes[0]['name']
         self.sat_dataset = self.sat_datasets[first_scene_name]
         self.uav_dataset_train = self.uav_datasets_train[first_scene_name]
@@ -259,24 +251,21 @@ class BaseTrainer:
 
 
     def _load_checkpoint(self, ckpt_config, modules_dict, optimizer=None, mode='train'):
-        """
-        加载checkpoint
+        """Load a checkpoint.
 
         Args:
-            ckpt_config: checkpoint配置（dict或str）
-            modules_dict: 需要加载的模块字典
-                         例如 {'vis_encoder': self.vis_encoder, 'grid': self.grid}
-            optimizer: 优化器对象（仅在mode='train'且继续训练时需要）
-            mode: 'train' 或 'test'
+            ckpt_config: Checkpoint configuration as a dict or string.
+            modules_dict: Modules to load, e.g. {'vis_encoder': self.vis_encoder, 'grid': self.grid}.
+            optimizer: Required only when resuming training with mode='train'.
+            mode: 'train' or 'test'.
 
         Returns:
-            begin_epoch: 起始epoch（如果是新训练则为0）
-        """
-        from continuloc.engine.util_ckpt_handler import load_param
+            Starting epoch, or 0 for a new training run."""
+        from continuloc.engine.checkpoints import load_param
 
         begin_epoch = 0
 
-        # 处理dict格式的checkpoint配置
+        # Handle dictionary checkpoint configuration.
         if isinstance(ckpt_config, dict):
             for module_name, ckpt_path in ckpt_config.items():
                 if ckpt_path and ckpt_path != "":
@@ -288,15 +277,15 @@ class BaseTrainer:
                         else:
                             print(msg)
 
-        # 处理str格式的checkpoint配置
+        # Handle string checkpoint configuration.
         elif isinstance(ckpt_config, str) and ckpt_config != "":
-            # 加载所有模块
+            # Load all modules.
             params_to_load = {**modules_dict}
             if optimizer is not None and mode == 'train':
                 params_to_load['optimizer_state'] = optimizer
             loaded_params = load_param(ckpt_config, params_to_load)
 
-            # 获取epoch信息
+            # Retrieve the epoch information.
             if 'epoch' in loaded_params:
                 begin_epoch = loaded_params['epoch'] + 1
 
@@ -310,31 +299,29 @@ class BaseTrainer:
 
 
     def _save_checkpoint(self, epoch, modules_dict, optimizer=None):
-        """
-        保存checkpoint
+        """Save a checkpoint.
 
         Args:
-            epoch: 当前epoch
-            modules_dict: 需要保存的模块字典
-            optimizer: 优化器对象（可选）
-        """
-        from continuloc.engine.util_ckpt_handler import save_param
+            epoch: Current epoch.
+            modules_dict: Modules to save.
+            optimizer: Optional optimizer."""
+        from continuloc.engine.checkpoints import save_param
 
-        # 准备要保存的参数
+        # Prepare the parameters to save.
         params_to_save = {**modules_dict}
 
-        # 添加优化器和epoch信息
+        # Add optimizer state and epoch information.
         if optimizer is not None:
             params_to_save['optimizer_state'] = optimizer
         params_to_save['epoch'] = epoch
 
-        # 保存
+        # Save the checkpoint.
         save_dir = self.ckpt_dir2save or self.exp_dir2save or self.opt.exp_name
         save_param(save_dir, params_to_save)
 
         if (not self._exp_backup_saved) and save_dir:
             try:
-                from continuloc.engine.util_backup_exp_by_git import backup_experiment
+                from continuloc.engine.git_snapshot import backup_experiment
                 backup_experiment(save_dir, self.opt)
                 self._exp_backup_saved = True
             except Exception as exc:
@@ -348,15 +335,13 @@ class BaseTrainer:
 
 
     def _get_feats_fm_imgs(self, imgs):
-        """
-        从图像提取特征
+        """Extract image features.
 
         Args:
-            imgs: [B, C, H, W] 图像tensor
+            imgs: Image tensor [B, C, H, W].
 
         Returns:
-            feats: [B, feat_dim] 特征向量
-        """
+            Feature vectors [B, feat_dim]."""
         with torch.no_grad():
             feats_patch = self.vis_encoder(imgs)
             feats = self.vis_aggregator(feats_patch)
@@ -364,18 +349,14 @@ class BaseTrainer:
 
 
     def train(self):
-        """
-        训练主循环
+        """Run the main training loop.
 
-        子类必须实现此方法
-        """
+        Subclasses must implement this method."""
         raise NotImplementedError("子类必须实现train()方法")
 
 
     def test(self):
-        """
-        测试/评估
+        """Run testing/evaluation.
 
-        子类可选实现
-        """
+        Subclasses may implement this method."""
         raise NotImplementedError("子类必须实现test()方法")

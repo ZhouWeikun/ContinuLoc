@@ -14,7 +14,7 @@ class NetworkComponents:
         self.device = device
 
     def create_visual_encoder(self):
-        from continuloc.models.Backbone.util_mk_backbone import make_backbone
+        from continuloc.models.Backbone.backbone_factory import make_backbone
 
         backbone_name = self.opt.backbone
         backbone_config = getattr(self.opt, "backbone_config", {})
@@ -96,7 +96,7 @@ class NetworkComponents:
         return aggregator
 
     def create_coords_5d_encoder(self, multires_rc=8, multires_rot=6, multires_scale=4):
-        from continuloc.models.pos_encoder_euc5d import Coords5DEncoder
+        from continuloc.models.pose_encoding import Coords5DEncoder
 
         encoder = Coords5DEncoder(
             multires_rc=multires_rc,
@@ -132,7 +132,7 @@ class NetworkComponents:
         if config_path is None:
             config_path = getattr(self.opt, "p_grid_config_yaml", None)
         if not config_path:
-            config_path = os.path.join(project_root, "configs/nerf_hash_wingtra.yaml")
+            config_path = os.path.join(project_root, "configs/neural_field_hash_grid_continuscenes.yaml")
         elif not os.path.isabs(str(config_path)):
             config_path = os.path.join(project_root, str(config_path))
 
@@ -192,7 +192,7 @@ class NetworkComponents:
         return aggregator
 
     def create_grid_mlp(self, input_dim, condition_dim, hidden_dim=512, num_blocks=1, output_dim=None):
-        from continuloc.models.stage2_grid_mlp import Stage2GridFeatureMLP
+        from continuloc.models.neural_field_mlp import Stage2GridFeatureMLP
 
         if output_dim is None:
             output_dim = input_dim

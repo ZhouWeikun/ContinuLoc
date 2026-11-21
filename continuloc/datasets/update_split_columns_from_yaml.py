@@ -22,7 +22,7 @@ preload_conda_libstdcpp()
 import pandas as pd
 
 from continuloc.config.parser import _expand_selected_scene_config
-from continuloc.datasets.dataset_neuloc_4d import (
+from continuloc.datasets.uav_satellite import (
     SatDataset,
     UAVDataset,
     _build_split_column_name,
@@ -149,7 +149,7 @@ def main():
     parser.add_argument(
         "yaml_paths",
         nargs="+",
-        help="One or more YAML config paths, e.g. configs/stage1_visual_encoder_wingtra.yaml",
+        help="One or more YAML config paths, e.g. configs/visual_encoder_continuscenes.yaml",
     )
     args = parser.parse_args()
 

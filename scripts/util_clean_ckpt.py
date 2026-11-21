@@ -45,7 +45,7 @@ def _should_keep_epoch_segmented(
     interval_before_seg: int,
     interval_after_seg: int,
 ) -> bool:
-    # 分界点本身始终保留；其余 ckpt 以 epoch_seg 为锚点向前/向后按间隔保留。
+    # Always retain the boundary epoch; retain others at intervals anchored to epoch_seg.
     if epoch_num == epoch_seg:
         return True
     if epoch_num < epoch_seg:
@@ -59,25 +59,15 @@ def clean_checkpoints(
     dry_run: bool = True,
     segmented_cfg: Optional[Dict[str, int]] = None,
 ):
-    """
-    清理目录下的 checkpoint。
+    """Clean checkpoints in a directory.
 
-    规则一：legacy 模式
-        - 传入 k
-        - 保留 epoch % k == 0 的 ckpt
-        - 始终保留最新 ckpt
+    Legacy mode: supply k, retain epochs satisfying epoch % k == 0,
+    and always retain the latest checkpoint.
 
-    规则二：segmented 模式
-        - 传入 segmented_cfg={
-              'epoch_seg': ...,
-              'interval_before_seg': ...,
-              'interval_after_seg': ...,
-          }
-        - epoch < epoch_seg: 以 epoch_seg 为锚点，按 interval_before_seg 间隔保留
-        - epoch > epoch_seg: 以 epoch_seg 为锚点，按 interval_after_seg 间隔保留
-        - epoch == epoch_seg: 若存在则始终保留
-        - 某侧 interval <= 0 时，该侧 ckpt 全部删除
-    """
+    Segmented mode: supply segmented_cfg with epoch_seg, interval_before_seg,
+    and interval_after_seg. Retention intervals on either side are anchored
+    to epoch_seg. Always retain epoch_seg itself when present. An interval
+    <= 0 removes all checkpoints on that side."""
     if not os.path.isdir(directory):
         print(f"Error: Directory not found at '{directory}'")
         return
@@ -255,7 +245,6 @@ def main():
 
 
 if __name__ == "__main__":
-    # main()
     segmented_cfg= {
             "epoch_seg": 30,
             "interval_before_seg": 5,

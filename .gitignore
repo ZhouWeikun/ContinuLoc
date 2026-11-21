@@ -135,22 +135,9 @@ dmypy.json
 *.onnx
 .reproduce_state
 
-train_img_encoder/exps/
-train_map_mutimlp_skzm/exps/
-train_map_singlemlp/exps/
-train_img_encoder/exps
-evaluate_img_encoder/
-trainers/.exps/
-trainers/exps/
-trainers/vis_results/
+# Model caches and generated experiment outputs
 tmp_gallery_bank/
-
-train_img_encoder/
-train_map_singlemlp/
-train_map_multimlp/
-scripts/tmp_run_yamls/
 gen_fm_exps/
-fine_vis4paper/
 
 # Temporary work and runtime artifacts
 /temp/

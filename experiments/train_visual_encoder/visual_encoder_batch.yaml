@@ -1,0 +1,9 @@
+# ContinuScenes joint-training example; base: configs/visual_encoder_continuscenes.yaml.
+# Select scenes from the manifest; unspecified settings inherit the base configuration.
+# Customize and set enabled: true; copy entries with distinct names for additional experiments.
+experiments:
+  - name: visual_encoder_example
+    enabled: false
+    overrides:
+      selected_scene_names: [visloc_03]
+      split_mode: interval

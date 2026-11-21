@@ -1,0 +1,305 @@
+diff --git a/app/nerf/main_nerf.py b/app/nerf/main_nerf.py
+index 69d3476..9b59060 100644
+--- a/app/nerf/main_nerf.py
++++ b/app/nerf/main_nerf.py
+@@ -61,73 +61,74 @@ class NeRFAppConfig:
+     Otherwise, interactive mode is on by default. """
+ 
+ 
+-cfg = parse_config(NeRFAppConfig, yaml_arg='--config')  # Obtain args by priority: cli args > config yaml > config defaults
+-device = torch.device(cfg.device)
+-default_log_setup(cfg.log_level)
+-if cfg.interactive:
+-    cfg.tracer.bg_color = (0.0, 0.0, 0.0)
+-    cfg.trainer.render_every = -1
+-    cfg.trainer.save_every = -1
+-    cfg.trainer.valid_every = -1
+-print_config(cfg)
++if __name__ == "__main__":
++    cfg = parse_config(NeRFAppConfig, yaml_arg='--config')  # Obtain args by priority: cli args > config yaml > config defaults
++    device = torch.device(cfg.device)
++    default_log_setup(cfg.log_level)
++    if cfg.interactive:
++        cfg.tracer.bg_color = (0.0, 0.0, 0.0)
++        cfg.trainer.render_every = -1
++        cfg.trainer.save_every = -1
++        cfg.trainer.valid_every = -1
++    print_config(cfg)
+ 
+-# Loads a multiview dataset comprising of pairs of images and calibrated cameras:
+-# NeRFSyntheticDataset - refers to the standard NeRF format popularized by Mildenhall et al. 2020,
+-#   including additions to the metadata format added by Muller et al. 2022.
+-# 'rtmv' - refers to the dataset published by Tremblay et. al 2022,
+-# RTMVDataset - A Ray-Traced Multi-View Synthetic Dataset for Novel View Synthesis",
+-#   this dataset includes depth information which allows for performance improving optimizations in some cases.
+-dataset_transform = instantiate(cfg.dataset_transform)  # SampleRays creates batches of rays from the dataset
+-train_dataset = instantiate(cfg.dataset, transform=dataset_transform)  # A Multiview dataset
+-validation_dataset = None
+-if cfg.trainer.valid_every > -1 or cfg.trainer.mode == 'validate':
+-    validation_dataset = train_dataset.create_split(split=cfg.trainer.valid_split, transform=None)
++    # Loads a multiview dataset comprising of pairs of images and calibrated cameras:
++    # NeRFSyntheticDataset - refers to the standard NeRF format popularized by Mildenhall et al. 2020,
++    #   including additions to the metadata format added by Muller et al. 2022.
++    # 'rtmv' - refers to the dataset published by Tremblay et. al 2022,
++    # RTMVDataset - A Ray-Traced Multi-View Synthetic Dataset for Novel View Synthesis",
++    #   this dataset includes depth information which allows for performance improving optimizations in some cases.
++    dataset_transform = instantiate(cfg.dataset_transform)  # SampleRays creates batches of rays from the dataset
++    train_dataset = instantiate(cfg.dataset, transform=dataset_transform)  # A Multiview dataset
++    validation_dataset = None
++    if cfg.trainer.valid_every > -1 or cfg.trainer.mode == 'validate':
++        validation_dataset = train_dataset.create_split(split=cfg.trainer.valid_split, transform=None)
+ 
+-if cfg.pretrained and cfg.trainer.model_format == "full":
+-    pipeline = torch.load(cfg.pretrained)   # Load a full pretrained pipeline: model + weights
+-else:  # Create model from scratch
+-    # Optimization: if dataset contains depth info, initialize only cells known to be occupied
+-    pointcloud = train_dataset.as_pointcloud() if train_dataset.supports_depth() else None
+-    # blas is the occupancy acceleration structure, for speeding up ray tracing
+-    blas = instantiate(cfg.blas, pointcloud=pointcloud)
+-    grid = instantiate(cfg.grid, blas=blas)  # A grid keeps track of both features and occupancy
+-    nef = instantiate(cfg.nef, grid=grid)    # NeRF uses a grid as the backbone
+-    # tracer is used to generate and integrate samples for the neural field.
+-    # Wisp's implementation of NeRF uses the PackedRFTracer to trace the neural field:
+-    # - Packed: each ray yields a custom number of samples, which are therefore packed in a flat form within a tensor,
+-    #    see: https://kaolin.readthedocs.io/en/latest/modules/kaolin.ops.batch.html#packed
+-    # - RF: Radiance Field
+-    tracer = instantiate(cfg.tracer)
+-    pipeline = Pipeline(nef=nef, tracer=tracer)  # Binds neural field and tracer together to a single NeRF callable
+-    if cfg.pretrained and cfg.trainer.model_format == "state_dict":
+-        pipeline.load_state_dict(torch.load(cfg.pretrained))
++    if cfg.pretrained and cfg.trainer.model_format == "full":
++        pipeline = torch.load(cfg.pretrained)   # Load a full pretrained pipeline: model + weights
++    else:  # Create model from scratch
++        # Optimization: if dataset contains depth info, initialize only cells known to be occupied
++        pointcloud = train_dataset.as_pointcloud() if train_dataset.supports_depth() else None
++        # blas is the occupancy acceleration structure, for speeding up ray tracing
++        blas = instantiate(cfg.blas, pointcloud=pointcloud)
++        grid = instantiate(cfg.grid, blas=blas)  # A grid keeps track of both features and occupancy
++        nef = instantiate(cfg.nef, grid=grid)  # NeRF uses a grid as the backbone
++        # tracer is used to generate and integrate samples for the neural field.
++        # Wisp's implementation of NeRF uses the PackedRFTracer to trace the neural field:
++        # - Packed: each ray yields a custom number of samples, which are therefore packed in a flat form within a tensor,
++        #    see: https://kaolin.readthedocs.io/en/latest/modules/kaolin.ops.batch.html#packed
++        # - RF: Radiance Field
++        tracer = instantiate(cfg.tracer)
++        pipeline = Pipeline(nef=nef, tracer=tracer)  # Binds neural field and tracer together to a single NeRF callable
++        if cfg.pretrained and cfg.trainer.model_format == "state_dict":
++            pipeline.load_state_dict(torch.load(cfg.pretrained))
+ 
+-# Joint trainer / app state - scene_state contains various global definitions
+-exp_name: str = cfg.trainer.exp_name
+-scene_state: WispState = WispState()
+-tracker = Tracker(cfg=cfg.tracker, exp_name=exp_name)
+-tracker.save_app_config(cfg)
+-trainer = MultiviewTrainer(cfg=cfg.trainer,
+-                           pipeline=pipeline,
+-                           train_dataset=train_dataset,
+-                           validation_dataset=validation_dataset,
+-                           tracker=tracker,
+-                           device=device,
+-                           scene_state=scene_state)
++    # Joint trainer / app state - scene_state contains various global definitions
++    exp_name: str = cfg.trainer.exp_name
++    scene_state: WispState = WispState()
++    tracker = Tracker(cfg=cfg.tracker, exp_name=exp_name)
++    tracker.save_app_config(cfg)
++    trainer = MultiviewTrainer(cfg=cfg.trainer,
++                               pipeline=pipeline,
++                               train_dataset=train_dataset,
++                               validation_dataset=validation_dataset,
++                               tracker=tracker,
++                               device=device,
++                               scene_state=scene_state)
+ 
+-# The trainer is responsible for managing the optimization life-cycles and can be operated in 2 modes:
+-# - Headless, which will run the train() function until all training steps are exhausted.
+-# - Interactive mode, which uses the gui. In this case, an OptimizationApp uses events to prompt the trainer to
+-#   take training steps, while also taking care to render output to users (see: iterate()).
+-#   In interactive mode, trainers can also share information with the app through the scene_state (WispState object).
+-if not cfg.interactive:
+-    logging.info("Running headless. For the app, set --interactive=True or $WISP_HEADLESS=0.")
+-    if cfg.trainer.mode == 'validate':
+-        trainer.validate()
+-    elif cfg.trainer.mode == 'train':
+-        trainer.train()  # Run in headless mode
+-else:
+-    from wisp.renderer.app.optimization_app import OptimizationApp
+-    scene_state.renderer.device = trainer.device  # Use same device for trainer and app renderer
+-    app = OptimizationApp(wisp_state=scene_state, trainer_step_func=trainer.iterate, experiment_name=exp_name)
+-    app.run()  # Run in interactive mode
++    # The trainer is responsible for managing the optimization life-cycles and can be operated in 2 modes:
++    # - Headless, which will run the train() function until all training steps are exhausted.
++    # - Interactive mode, which uses the gui. In this case, an OptimizationApp uses events to prompt the trainer to
++    #   take training steps, while also taking care to render output to users (see: iterate()).
++    #   In interactive mode, trainers can also share information with the app through the scene_state (WispState object).
++    if not cfg.interactive:
++        logging.info("Running headless. For the app, set --interactive=True or $WISP_HEADLESS=0.")
++        if cfg.trainer.mode == 'validate':
++            trainer.validate()
++        elif cfg.trainer.mode == 'train':
++            trainer.train()  # Run in headless mode
++    else:
++        from wisp.renderer.app.optimization_app import OptimizationApp
++        scene_state.renderer.device = trainer.device  # Use same device for trainer and app renderer
++        app = OptimizationApp(wisp_state=scene_state, trainer_step_func=trainer.iterate, experiment_name=exp_name)
++        app.run()  # Run in interactive mode
+diff --git a/wisp/config/_tyro.py b/wisp/config/_tyro.py
+index 176eb76..1bd2b6d 100644
+--- a/wisp/config/_tyro.py
++++ b/wisp/config/_tyro.py
+@@ -18,6 +18,59 @@ import tyro
+ from ._exceptions import handle_custom_errors, AmbiguousArgument
+ 
+ 
++def parse_args_tyro_v1(config_type, yaml_path: Optional[str] = None, yaml_arg: Optional[str] = '--config'):
++    """Parse args from a config dataclass.
++
++    Args:
++        config_type (type): The type for the config object.
++        yaml_path (str, optional): Path to config file. If provided, this takes precedence over CLI.
++        yaml_arg (str): CLI flag name for config path (default: --config). Ignored if yaml_path is given.
++    """
++    tyro_markers = [
++        tyro.conf.AvoidSubcommands,
++        tyro.conf.ConsolidateSubcommandArgs,
++        tyro.conf.FlagConversionOff,
++        tyro.conf.SuppressFixed,
++    ]
++    apply_tyro_markers = tyro.conf.configure(*tyro_markers)
++    decorated_config_type = apply_tyro_markers(config_type)
++
++    # Prefer an explicit YAML path.
++    if yaml_path is not None:
++        path = yaml_path
++    else:
++        path = None
++        if yaml_arg is not None:
++            path = find_config_file(sys.argv, yaml_arg)
++
++    cli_subcommand_pos, cli_args = _collect_cli_args_and_subcommands()
++    cli_mapping = _resolve_shortened_arg_names(config_type, cli_args)
++
++    config_subcommands, config_args = None, None
++    if path is not None:
++        assert os.path.exists(path), f'Invalid configuration file path: "{path}".'
++        config_subcommands, config_args = load_config(path)
++
++    _reform_sys_argv(config_type, config_subcommands, config_args, cli_subcommand_pos, cli_args, cli_mapping)
++
++    additional_info = None
++    if len(sys.argv) == 1 or '--help' in sys.argv or '-h' in sys.argv:
++        if tyro.conf.ConsolidateSubcommandArgs in tyro_markers:
++            tyro_markers.remove(tyro.conf.ConsolidateSubcommandArgs)
++            apply_tyro_markers = tyro.conf.configure(*tyro_markers)
++            decorated_config_type = apply_tyro_markers(config_type)
++    else:
++        additional_info = handle_custom_errors(decorated_config_type)
++
++    try:
++        args = tyro.cli(decorated_config_type)
++    except SystemExit as e:
++        if additional_info:
++            sys.stderr.write(additional_info)
++        raise e
++
++    return args
++
+ 
+ def parse_args_tyro(config_type, yaml_arg: Optional[str]='--config'):
+     """Parse args from a config dataclass.
+diff --git a/wisp/datasets/batch.py b/wisp/datasets/batch.py
+index 1535554..e4864db 100644
+--- a/wisp/datasets/batch.py
++++ b/wisp/datasets/batch.py
+@@ -7,14 +7,32 @@
+ # license agreement from NVIDIA CORPORATION & AFFILIATES is strictly prohibited.
+ 
+ 
+-from attrdict import AttrDict
+ from typing import Optional, List, Dict, Any
+ import torch
+ from kaolin.render.camera import Camera
+ from wisp.core import Rays
+ 
+-
+-class Batch(AttrDict):
++class SimpleAttrDict(dict):
++    """A simple, dependency-free, drop-in replacement for the core
++    functionality of the abandoned 'attrdict' package.
++    Allows accessing dictionary keys as attributes (obj.key for obj['key']).
++    """
++    def __getattr__(self, name):
++        try:
++            return self[name]
++        except KeyError:
++            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
++
++    def __setattr__(self, name, value):
++        self[name] = value
++
++    def __delattr__(self, name):
++        try:
++            del self[name]
++        except KeyError:
++            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
++
++class Batch(SimpleAttrDict):
+     """ Represents a single batch of information sampled and collated from a WispDataset.
+     Batches in Wisp keep a general structure by subclassing python's dictionaries and using their semantics.
+     The exact fields each batch contain depend on the dataset type.
+diff --git a/wisp/framework/state.py b/wisp/framework/state.py
+index a67044b..bdaabf3 100644
+--- a/wisp/framework/state.py
++++ b/wisp/framework/state.py
+@@ -257,13 +257,13 @@ class OptimizationState:
+ class WispState:
+     """ Holds all information shared between components of a single wisp app. """
+ 
+-    renderer: InteractiveRendererState = InteractiveRendererState()
++    renderer: InteractiveRendererState = field(default_factory=InteractiveRendererState)
+     """ Holds settings directly used by the interactive renderer of wisp apps. """
+ 
+-    graph: SceneGraphState = SceneGraphState()
++    graph: SceneGraphState = field(default_factory=SceneGraphState)
+     """ Holds the entire scene graph of objects. """
+ 
+-    optimization: OptimizationState = OptimizationState()
++    optimization: OptimizationState = field(default_factory=OptimizationState)
+     """ Holds information about an optimization task wisp is currently running. """
+ 
+     extent: Dict[str, object] = field(default_factory=dict)
+diff --git a/wisp/trainers/tracker/metrics.py b/wisp/trainers/tracker/metrics.py
+index 9dcb55b..2b5f969 100644
+--- a/wisp/trainers/tracker/metrics.py
++++ b/wisp/trainers/tracker/metrics.py
+@@ -1,8 +1,28 @@
+-from attrdict import AttrDict
+ from typing import Union, Type
+ 
+ 
+-class MetricsBoard(AttrDict):
++class SimpleAttrDict(dict):
++    """A simple, dependency-free, drop-in replacement for the core
++    functionality of the abandoned 'attrdict' package.
++    Allows accessing dictionary keys as attributes (obj.key for obj['key']).
++    """
++    def __getattr__(self, name):
++        try:
++            return self[name]
++        except KeyError:
++            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
++
++    def __setattr__(self, name, value):
++        self[name] = value
++
++    def __delattr__(self, name):
++        try:
++            del self[name]
++        except KeyError:
++            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
++
++
++class MetricsBoard(SimpleAttrDict):
+     """ A module for aggregating losses and metrics during optimization.
+     Usage:
+         - define_metric() declares the metrics this board expects, call this once when the optimization starts.

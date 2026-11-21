@@ -1,0 +1,10 @@
+name: continuloc
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.11
+  - pip=25.2
+  - setuptools=75.8
+  - wheel=0.45
+  - libstdcxx-ng
