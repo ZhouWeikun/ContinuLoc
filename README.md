@@ -16,7 +16,7 @@
   <img src="./assets/images/ContinuLoc.png" alt="Overview of the ContinuLoc method" width="100%">
 </p>
 
-## Overview
+## 🧭 Overview
 
 ContinuLoc estimates a UAV image's continuous 4DoF pose by searching a query–map compatibility landscape. This repository provides training and inference code for the three components in Sections 4.2–4.4 of the paper.
 
@@ -28,7 +28,7 @@ ContinuLoc estimates a UAV image's continuous 4DoF pose by searching a query–m
 
 To evaluate the supplied pretrained models, start with the reproduction workflow below. Retraining the visual encoder or neural field is not required.
 
-## Environment
+## ⚙️ Environment
 
 The reference environment uses Linux x86-64 (glibc 2.31 or later), Python 3.11, and an NVIDIA GPU with a driver that supports CUDA 12.1. Each stage includes the requirements of the previous stage. To add a later stage, install its requirements in the same environment.
 
@@ -63,7 +63,9 @@ python -m pip install --no-build-isolation -e "$KAOLIN_WISP_ROOT"
 
 Keep `KAOLIN_WISP_ROOT` set when running neural field training or inference. Run the commands below from the ContinuLoc root.
 
-## Reproduce inference with the supplied models
+<a name="reproduce-inference-with-the-supplied-models"></a>
+
+## 🔍 Reproduce inference with the supplied models
 
 ### 1. Prepare the data and reproduction bundle
 
@@ -147,7 +149,7 @@ python experiments/eval_pose_inference/run.py \
 
 The bundle supplies each model's hash-grid structure, search settings, evaluation thresholds, and frozen query assignments. Preserve these settings when evaluating the supplied models; the default training configurations in this repository are examples for new experiments. In particular, 18-bit and 19-bit hash grids must match their respective checkpoints.
 
-## Train your own models
+## 🧪 Train your own models
 
 The training workflow follows the paper: learn a pose-sensitive visual encoder, compress its descriptors into a neural field for each scene, then perform hierarchical pose inference.
 
@@ -157,7 +159,7 @@ The training workflow follows the paper: learn a pose-sensitive visual encoder, 
 
 Training uses shared ContinuScenes configurations and selects scenes by name. Each experiment directory includes one disabled batch example to customize. See the [configuration guide](configs/README.md) for data paths, frozen splits, and model compatibility.
 
-## Example inference results
+## 🗺️ Example inference results
 
 <p align="center">
   <img src="./assets/images/search_taizhou03.png" alt="ContinuLoc inference result on Taizhou" width="100%">
@@ -169,7 +171,7 @@ Training uses shared ContinuScenes configurations and selects scenes by name. Ea
   <br><em>Zurich scene.</em>
 </p>
 
-## Citation
+## 📚 Citation
 
 If you use this code or the pretrained models in your research, please cite the [ContinuLoc paper](https://neurips.cc/virtual/2026/poster/149317).
 
