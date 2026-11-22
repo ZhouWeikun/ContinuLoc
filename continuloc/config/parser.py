@@ -10,6 +10,9 @@ import json
 from pathlib import Path
 
 
+DEFAULT_SPLIT_SOURCE = 'json'
+
+
 def _parse_boolean(value):
     if isinstance(value, bool):
         return value
@@ -301,7 +304,8 @@ def get_parse(print_summary=True):
                         help='尺度过滤：none 不过滤；percentile 严格 P2/P99；mad 复现 master 通用 MAD 3.5。未配置时兼容旧行为。')
     parser.add_argument('--enable_edge_filter', type=_parse_boolean, default=None,
                         help='是否启用卫星采样边缘过滤；JSON 模式下用于选择已保存的过滤方案')
-    parser.add_argument('--split_source', default='generated', choices=['generated', 'csv', 'json'], help='按比例生成划分，读取 CSV 列，或读取固定 JSON（比例由 JSON 决定）')
+    parser.add_argument('--split_source', default=DEFAULT_SPLIT_SOURCE, choices=['generated', 'csv', 'json'],
+                        help='Split source: fixed JSON (default), generated from ratios, or a CSV column.')
     parser.add_argument('--split_val_ratio', default=0.0, type=float, help='验证集占全部参与划分样本的比例；从原测试集合中划出，默认关闭')
     parser.add_argument('--split_train_ratio', default=0.9, type=float, help='UAV 数据集训练集比例')
     parser.add_argument(

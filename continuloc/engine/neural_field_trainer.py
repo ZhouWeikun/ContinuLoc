@@ -20,6 +20,7 @@ import time
 from contextlib import nullcontext
 
 import torch
+from continuloc.config.parser import DEFAULT_SPLIT_SOURCE
 from continuloc.evaluation.partitioned_recall import PartitionedRecall
 import torch.nn.functional as F
 import tqdm
@@ -157,7 +158,7 @@ class MinimalStage2INGPTrainer(BaseTrainer):
             "imgsize2net": 224,
             "split_train_ratio": 0.9,
             "split_val_ratio": 0.0,
-            "split_source": "generated",
+            "split_source": DEFAULT_SPLIT_SOURCE,
             "split_mode": "segment",
             "sat_scale_sampling_mode": "empirical",
             "sat_scale_jitter_enabled": True,

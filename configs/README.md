@@ -37,7 +37,7 @@ For visual encoder training, choose a list with `--selected_scene_names visloc_0
 
 ## Fixed training and evaluation protocols
 
-The shared examples use:
+ContinuLoc reads fixed JSON splits by default. The shared examples use:
 
 ```yaml
 data_setting:

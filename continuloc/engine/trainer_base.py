@@ -10,7 +10,7 @@ import copy
 import os
 from torch.utils.tensorboard import SummaryWriter
 
-from continuloc.config.parser import get_parse
+from continuloc.config.parser import DEFAULT_SPLIT_SOURCE, get_parse
 from continuloc.engine.logger_utils import get_logger
 from continuloc.datasets.uav_satellite import UAVDataset, SatDataset
 
@@ -162,7 +162,7 @@ class BaseTrainer:
                 imgsize2net=opt.imgsize2net,
                 split_train_ratio=opt.split_train_ratio,
                 split_mode=opt.split_mode,
-                split_source=getattr(opt, "split_source", "generated"),
+                split_source=getattr(opt, "split_source", DEFAULT_SPLIT_SOURCE),
                 p_split_json=scene.get('p_split_json'),
                 enable_edge_filter=getattr(opt, 'enable_edge_filter', True),
                 geo_rc_epsg_code=scene.get('geo_rc_epsg_code'),
@@ -194,7 +194,7 @@ class BaseTrainer:
                 split_train_ratio=opt.split_train_ratio,
                 split_val_ratio=getattr(opt, "split_val_ratio", 0.0),
                 split_mode=opt.split_mode,
-                split_source=getattr(opt, "split_source", "generated"),
+                split_source=getattr(opt, "split_source", DEFAULT_SPLIT_SOURCE),
                 p_split_json=scene.get('p_split_json'),
                 enable_edge_filter=getattr(opt, 'enable_edge_filter', True),
             )
@@ -214,7 +214,7 @@ class BaseTrainer:
                 split_train_ratio=opt.split_train_ratio,
                 split_val_ratio=getattr(opt, "split_val_ratio", 0.0),
                 split_mode=opt.split_mode,
-                split_source=getattr(opt, "split_source", "generated"),
+                split_source=getattr(opt, "split_source", DEFAULT_SPLIT_SOURCE),
                 p_split_json=scene.get('p_split_json'),
                 enable_edge_filter=getattr(opt, 'enable_edge_filter', True),
             )

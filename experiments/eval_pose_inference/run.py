@@ -15,7 +15,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
-from continuloc.config.parser import _expand_selected_scene_config
+from continuloc.config.parser import DEFAULT_SPLIT_SOURCE, _expand_selected_scene_config
 from continuloc.config.inference import checkpoint_scene_name, checkpoint_grid_path
 
 
@@ -114,13 +114,14 @@ def prepare(config):
     settings.pop('selected_scene_names', None)
     settings['selected_scene_name'] = scene
     data = {**stage2.get('data_setting', {}), **config.get('data_setting', {})}
-    scenes = _expand_selected_scene_config(settings, require_splits=data.get('split_source') == 'json')
+    split_source = data.get('split_source', DEFAULT_SPLIT_SOURCE)
+    scenes = _expand_selected_scene_config(settings, require_splits=split_source == 'json')
     if len(scenes['scenes']) != 1:
         raise ValueError('Stage 3 requires exactly one resolved scene')
     config['scenes_setting'] = scenes
     exp['selected_scene_name'] = scene
     profile = None
-    if data.get('split_source') == 'json':
+    if split_source == 'json':
         from continuloc.datasets.fixed_splits import select_filter_profile
         profile = select_filter_profile(data.get('enable_edge_filter', True), data.get('scale_filter_mode'))
         if data.get('split_val_ratio', 0) != 0:
@@ -149,7 +150,7 @@ def prepare(config):
     exp['stage3_recall_cfg_yaml'] = str(threshold_path)
     print(f'Scene: {scene}; recall: {selector} = {threshold}', flush=True)
     return config, {'scene': scene, 'recall_config': selector, 'thresholds': threshold,
-                    'split_source': data.get('split_source', 'generated'),
+                    'split_source': split_source,
                     'filter_profile': profile,
                     'split_json': scenes['scenes'][0].get('p_split_json')}
 
