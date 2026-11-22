@@ -1,8 +1,22 @@
-## ContinuLoc: Continuous Pose Inference over Neural Fields for UAV Geo-Localization
+
+<h1 align="center">ContinuLoc</h1>
 
 <p align="center">
-  <img src="./assets/images/ContinuLoc.png" alt="ContinuLoc">
+  <strong>Continuous Pose Inference over Neural Fields for UAV Geo-Localization</strong>
 </p>
+
+<p align="center">
+  <a href="https://neurips.cc/virtual/2026/poster/149317"><img src="https://img.shields.io/badge/Paper-NeurIPS%202026-7C3AED" alt="Paper: NeurIPS 2026"></a>
+  <a href="https://huggingface.co/datasets/wk666/ContinuScenes"><img src="https://img.shields.io/badge/Dataset-ContinuScenes-E9A820?logo=huggingface&amp;logoColor=white" alt="Dataset: ContinuScenes"></a>
+  <a href="https://huggingface.co/wk666/ContinuLoc"><img src="https://img.shields.io/badge/Models-ContinuLoc-2563EB?logo=huggingface&amp;logoColor=white" alt="Pretrained ContinuLoc models"></a>
+  <a href="#reproduce-inference-with-the-supplied-models"><img src="https://img.shields.io/badge/Guide-Reproduce%20Inference-0D9488" alt="Reproduce inference"></a>
+</p>
+
+<p align="center">
+  <img src="./assets/images/ContinuLoc.png" alt="Overview of the ContinuLoc method" width="100%">
+</p>
+
+## Overview
 
 ContinuLoc estimates a UAV image's continuous 4DoF pose by searching a query–map compatibility landscape. This repository provides training and inference code for the three components in Sections 4.2–4.4 of the paper.
 
