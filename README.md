@@ -133,20 +133,6 @@ python experiments/eval_pose_inference/run.py \
 
 The bundle supplies each model's hash-grid structure, search settings, evaluation thresholds, and frozen query assignments. Preserve these settings when evaluating the supplied models; the default training configurations in this repository are examples for new experiments. In particular, 18-bit and 19-bit hash grids must match their respective checkpoints.
 
-### 4. Inspect the results
-
-Each run creates a timestamped directory beneath `output_dir`, containing:
-
-- `stage3_progressive_recall_report.json`: recall and error statistics across the search stages.
-- `predictions.pt`: predicted poses, scores, ground truth, and split labels.
-- `timing.json`: inference timing.
-- `config.yaml`, `recall_thresholds.yaml`, and `manifest.json`: effective settings and model provenance.
-- `console.log`: execution log.
-
-Resolved input configurations and frozen split copies are saved under `output_dir/inputs_<timestamp>/`. Additional logs are written to `gen_fm_exps/logs/inference_stage3/` in the repository.
-
-Compare results using the same experiment, evaluation members, and thresholds. A one-query check is not a full evaluation. Search randomness and numerical differences may affect results; a successful preflight alone does not establish agreement with the paper's metrics.
-
 ## Train your own models
 
 The training workflow follows the paper: learn a pose-sensitive visual encoder, compress its descriptors into a neural field for each scene, then perform hierarchical pose inference.
