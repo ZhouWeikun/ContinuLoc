@@ -7,6 +7,7 @@
 
 <p align="center">
   <a href="https://neurips.cc/virtual/2026/poster/149317"><img src="https://img.shields.io/badge/Paper-NeurIPS%202026-7C3AED" alt="Paper: NeurIPS 2026"></a>
+  <a href="https://arxiv.org/abs/2611.29276"><img src="https://img.shields.io/badge/arXiv-2611.29276-B31B1B?logo=arxiv&amp;logoColor=white" alt="arXiv: 2611.29276"></a>
   <a href="https://huggingface.co/datasets/wk666/ContinuScenes"><img src="https://img.shields.io/badge/Dataset-ContinuScenes-E9A820?logo=huggingface&amp;logoColor=white" alt="Dataset: ContinuScenes"></a>
   <a href="https://huggingface.co/wk666/ContinuLoc"><img src="https://img.shields.io/badge/Models-ContinuLoc-2563EB?logo=huggingface&amp;logoColor=white" alt="Pretrained ContinuLoc models"></a>
   <a href="#reproduce-inference-with-the-supplied-models"><img src="https://img.shields.io/badge/Guide-Reproduce%20Inference-0D9488" alt="Reproduce inference"></a>
@@ -178,7 +179,7 @@ If you use this code or the pretrained models in your research, please cite the 
 ```bibtex
 @inproceedings{zhou2026continuloc,
   title     = {{ContinuLoc}: Continuous Pose Inference over Neural Fields for {UAV} Geo-Localization},
-  author    = {Weikun Zhou and Jinliang Lin and Yu Zang and Lin Xie and HaiqingFu
+  author    = {Weikun Zhou and Jinliang Lin and Yu Zang and Lin Xie and Haiqing Fu
                and Sheng Ao and Shangshu Yu and Zhiming Luo and Cheng Wang},
   booktitle = {Conference on Neural Information Processing Systems (NeurIPS)},
   year      = {2026},
